@@ -1,0 +1,90 @@
+# tropel-sdk CI
+#
+# The SDK lives in its own repo (transithq/tropel-sdk) since the P7 split of
+# the Tropel monorepo. This workflow is the SDK's own enforcement:
+#   - fmt / clippy / test keep the published crate honest on its own.
+#   - `sdk-gates` (scripts/sdk-gates.sh) is the enforcement that used to run
+#     in the monorepo (TROPEL_MODULARIZATION_TODO.md → P2): the SDK must stay
+#     a leaf, compile for wasm32, and build from a consumer with no SDK
+#     checkout (`cargo package` + sample-ext). It moved here because the
+#     monorepo now consumes tropel-sdk as a git dependency, so `cargo package
+#     -p tropel-sdk` cannot run there anymore.
+#
+# After a publish, docs.rs builds from the same manifest; a broken package
+# surfaces here first via Gate 3.
+
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: clippy (-D warnings)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets -- -D warnings
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
+
+  sdk-gates:
+    name: sdk gates (leaf · wasm · out-of-workspace)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: sdk-gates
+      #   1. tropel-sdk must stay a leaf (zero tropel-* deps) — the P1 inversion,
+      #      made permanent. A stray tropel-* dep added later would silently
+      #      destroy the publishable-isolated-crate property this enforces.
+      #   2. tropel-sdk must compile for wasm32 (browser slice target), with and
+      #      without the inventory-bearing registration feature.
+      #   3. the `cargo package`d artifact must build from a consumer outside the
+      #      workspace — catches missing files / broken feature defaults that the
+      #      in-repo build never sees.
+      - run: bash scripts/sdk-gates.sh
