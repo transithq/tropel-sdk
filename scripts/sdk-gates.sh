@@ -40,6 +40,13 @@ if [ -z "$PY" ]; then
 fi
 WS_ROOT=$(cargo metadata --format-version 1 --no-deps \
   | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["workspace_root"])')
+# cargo metadata emits NATIVE paths (Windows: D:\tropel) — tar would misread
+# the drive letter as a remote host. Convert to a shell-friendly form.
+if command -v cygpath >/dev/null 2>&1; then
+  WS_ROOT=$(cygpath -u "$WS_ROOT")
+else
+  WS_ROOT=${WS_ROOT//\\/\/}
+fi
 
 # --locked everywhere we resolve against the committed lockfile (matching the
 # rest of ci.yml), so a drifted Cargo.lock fails loudly instead of silently
