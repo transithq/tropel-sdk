@@ -170,7 +170,15 @@ impl VuContext {
 
 /// Trait that the engine implements so drivers can send HTTP requests
 /// without depending on the HTTP crate directly.
-#[async_trait]
+///
+/// On native the generated future is `Send` (VUs run on a multi-threaded
+/// runtime). On wasm32 there are no threads at all, so `Send` on the boxed
+/// future is pure friction — a browser slice awaits a host-provided JS
+/// `Promise` (whose wrapper may or may not be `Send`; it doesn't matter
+/// single-threaded). The `?Send` variant relaxes only the future bound —
+/// the trait itself stays `Send + Sync`, which wasm types satisfy trivially.
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 pub trait DriverHttpClient: Send + Sync {
     /// Execute an HTTP request and return the response.
     async fn execute(&self, req: &Request) -> Result<Response>;
