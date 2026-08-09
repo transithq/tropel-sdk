@@ -766,7 +766,10 @@ mod expected_status_tests {
         assert!(!status_is_expected(200, &[]));
         assert!(!status_is_expected(500, &[]));
         // Any-of semantics.
-        let set = [ExpectedStatus::Single(200), ExpectedStatus::Range("4xx".into())];
+        let set = [
+            ExpectedStatus::Single(200),
+            ExpectedStatus::Range("4xx".into()),
+        ];
         assert!(status_is_expected(200, &set));
         assert!(status_is_expected(404, &set));
         assert!(!status_is_expected(500, &set));
