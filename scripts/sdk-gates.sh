@@ -18,6 +18,15 @@ set -euo pipefail
 # script through the submodule path (crates/tropel-sdk/scripts/sdk-gates.sh).
 cd "$(dirname "$0")/.."
 
+# The dual-context trap: when this script runs from the monorepo submodule
+# path, cargo walks UP and resolves the MONOREPO workspace (the SDK manifest
+# has no [workspace] table), so target/ lives at the monorepo root. When run
+# from the SDK repo it resolves the SDK workspace. `cargo metadata` gives the
+# real workspace root either way — never assume it equals $PWD.
+PY=$(command -v python3 || command -v python)
+WS_ROOT=$(cargo metadata --format-version 1 --no-deps \
+  | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["workspace_root"])')
+
 # --locked everywhere we resolve against the committed lockfile (matching the
 # rest of ci.yml), so a drifted Cargo.lock fails loudly instead of silently
 # resolving a different graph. The outside-workspace build in Gate 3 must NOT
@@ -42,7 +51,7 @@ cargo package --locked -p tropel-sdk --allow-dirty
 VER=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
-tar xzf "target/package/tropel-sdk-${VER}.crate" -C "$WORK"
+tar xzf "$WS_ROOT/target/package/tropel-sdk-${VER}.crate" -C "$WORK"
 
 mkdir -p "$WORK/sample-ext/src"
 cat > "$WORK/sample-ext/Cargo.toml" <<EOF
