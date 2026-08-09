@@ -94,6 +94,73 @@ tropel-sdk = { version = "0.1", default-features = false }
 | `WASM` / `WIT` interface | 🔶 Resolves (parses) — `wit/adapter.wit` in the crate root is validated as a *parseable* WIT package; the forward-looking Component-Model contract, intentionally lagging the shipped C-ABI path (`tropel-wasm`) |
 | Engine config (`config` module) | 🔒 NOT re-exported at the root — engine-owned; only the contract-referenced subset lives here, reachable via `tropel_sdk::config::*` |
 
+## Polyglot extensions — one WIT, not N SDKs
+
+You do not publish an SDK per language. `wit/adapter.wit` defines the
+`tropel-adapter-world` (world `tropel-adapter` exporting `id` / `detect` /
+`parse` — exactly the `InputAdapter` tier). Any language with a
+`wit-bindgen` generator consumes that one file; there is no `@tropel/sdk` on
+npm, no Go module, no PyPI package to maintain, and no N-way version skew.
+
+**Rust (wit-bindgen):**
+
+```bash
+cargo add wit-bindgen
+```
+
+```rust
+// src/lib.rs — generated bindings + a component that implements the world
+wit_bindgen::generate!({ world: "tropel-adapter-world", generate_all: true });
+
+struct SampleAdapter;
+
+impl tropel_adapter::TropelAdapter for SampleAdapter {
+    fn id(&self) -> String {
+        "sample".into()
+    }
+    fn detect(&self, bytes: &[u8]) -> bool {
+        bytes.starts_with(b"SAMPLE\n")
+    }
+    fn parse(&self, _bytes: &[u8]) -> tropel_adapter::Result<tropel_adapter::Scenario> {
+        Ok(tropel_adapter::Scenario {
+            name: "sample".into(),
+            items: vec![],
+        })
+    }
+}
+
+export_tropel_adapter!(SampleAdapter);
+```
+
+**Non-Rust (C, via `wit-bindgen c`):**
+
+```bash
+wit-bindgen c wit/adapter.wit --out-dir src
+```
+
+```c
+// src/adapter.c — the same world, in C
+#include <string.h>
+#include "adapter.h"
+
+tropel_adapter_bool_t tropel_adapter_detect(
+    tropel_adapter_string_t bytes, uint32_t len) {
+  return len >= 7 && memcmp(bytes, "SAMPLE\n", 7) == 0;
+}
+
+tropel_adapter_own_scenario_t tropel_adapter_parse(
+    tropel_adapter_string_t bytes, uint32_t len) {
+  tropel_adapter_own_scenario_t s = tropel_adapter_scenario_constructor(
+      (tropel_adapter_string_t)"sample", 6, 0);
+  return s;
+}
+```
+
+The shipped `tropel-wasm` runtime currently speaks the hand-rolled C ABI
+(`adapter_id` / `adapter_detect` / `adapter_parse` over linear memory); the
+WIT component path is the forward-looking contract, kept valid and resolving
+so the component host can be built when the runtime is ready for it.
+
 ## License
 
 Licensed under the Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE)).
