@@ -23,7 +23,21 @@ cd "$(dirname "$0")/.."
 # has no [workspace] table), so target/ lives at the monorepo root. When run
 # from the SDK repo it resolves the SDK workspace. `cargo metadata` gives the
 # real workspace root either way — never assume it equals $PWD.
-PY=$(command -v python3 || command -v python)
+#
+# python is needed only to parse cargo's JSON. Probe candidates that actually
+# RUN: on Windows, `command -v python3` can find the Microsoft Store stub
+# alias, which exists but refuses to execute ("Python was not found").
+PY=""
+for cand in python3 python; do
+  if command -v "$cand" >/dev/null 2>&1 && "$cand" --version >/dev/null 2>&1; then
+    PY="$cand"
+    break
+  fi
+done
+if [ -z "$PY" ]; then
+  echo "FAIL: a working python3/python is required (to parse cargo metadata)"
+  exit 1
+fi
 WS_ROOT=$(cargo metadata --format-version 1 --no-deps \
   | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["workspace_root"])')
 
