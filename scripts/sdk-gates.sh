@@ -38,7 +38,9 @@ if [ -z "$PY" ]; then
   echo "FAIL: a working python3/python is required (to parse cargo metadata)"
   exit 1
 fi
-WS_ROOT=$(cargo metadata --format-version 1 --no-deps \
+# --locked like every other cargo call here: a drifted Cargo.lock must fail
+# loudly, not silently re-resolve before the gates below run.
+WS_ROOT=$(cargo metadata --locked --format-version 1 --no-deps \
   | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["workspace_root"])')
 # cargo metadata emits NATIVE paths (Windows: D:\tropel) — tar would misread
 # the drive letter as a remote host. Convert to a shell-friendly form.
