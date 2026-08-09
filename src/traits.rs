@@ -113,7 +113,7 @@ pub struct VuContext {
     /// once per scenario and threads the map into every VU's context, so a
     /// driver (k6, WASM, or a third-party one) can dispatch non-HTTP URLs
     /// through the same scheme lookup the declarative runner uses. Empty for
-    /// the declarative path, which keeps protocols on `VURunner` instead.
+    /// the declarative path, which keeps protocols on `ScenarioRunner` instead.
     pub protocols: Arc<HashMap<String, Arc<dyn Protocol>>>,
 }
 
