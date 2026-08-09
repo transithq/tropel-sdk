@@ -657,3 +657,118 @@ mod tests {
         assert!(worker.summary);
     }
 }
+
+// ── Expected HTTP status semantics (P3c) ───────────────────────────
+// Moved from tropel-core: `HttpConfig.expected_statuses` (tropel-http)
+// embeds these and tropel-runtime evaluates them for http_req_failed, so
+// the leaf SDK is the only crate both can share without dragging
+// tropel-core into the publish set. The modularization doc's first cut
+// proposed tropel-runtime as the home — impossible: tropel-http cannot
+// depend on tropel-runtime (P5b wasm gate) and tropel-runtime cannot
+// depend on tropel-http in production (reqwest would enter the wasm
+// graph). SDK it is.
+
+/// Expected status code or range for determining http_req_failed.
+/// A request fails (http_req_failed=1) when the response status code
+/// does NOT fall within any of the expected entries.
+///
+/// Each entry can be:
+/// - A single code: `200`
+/// - A range: `"200-399"`
+/// - A pattern with wildcard: `"2xx"`, `"3xx"`
+///
+/// Default: `["200-399"]` — all 2xx and 3xx are considered success.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ExpectedStatus {
+    Single(u16),
+    Range(String),
+}
+
+impl ExpectedStatus {
+    /// Check if a given status code matches this expected status entry.
+    pub fn matches(&self, code: u16) -> bool {
+        match self {
+            ExpectedStatus::Single(c) => *c == code,
+            ExpectedStatus::Range(s) => {
+                // Support patterns: "200-399" (range), "2xx" (wildcard), "200" (single)
+                if let Some((lo, hi)) = s.split_once('-') {
+                    // Range: "200-299"
+                    let lo: u16 = lo.trim().parse().unwrap_or(0);
+                    let hi: u16 = hi.trim().parse().unwrap_or(u16::MAX);
+                    code >= lo && code <= hi
+                } else if s.ends_with("xx") {
+                    // Wildcard: "2xx" → 200-299, "3xx" → 300-399
+                    let prefix = &s[..s.len() - 2];
+                    if let Ok(base) = prefix.parse::<u16>() {
+                        let lo = base * 100;
+                        let hi = lo + 99;
+                        code >= lo && code <= hi
+                    } else {
+                        false
+                    }
+                } else if let Ok(c) = s.parse::<u16>() {
+                    c == code
+                } else {
+                    false
+                }
+            }
+        }
+    }
+}
+
+/// Check if a response status code is expected (successful) according to the
+/// list of expected statuses. Returns true if the code matches ANY expected entry.
+/// Returns false if the list is empty (never succeeds — all requests fail).
+pub fn status_is_expected(code: u16, expected: &[ExpectedStatus]) -> bool {
+    if expected.is_empty() {
+        return false;
+    }
+    expected.iter().any(|e| e.matches(code))
+}
+
+#[cfg(test)]
+mod expected_status_tests {
+    use super::*;
+
+    #[test]
+    fn expected_status_single_range_wildcard_and_invalid() {
+        // Single code.
+        assert!(ExpectedStatus::Single(200).matches(200));
+        assert!(!ExpectedStatus::Single(200).matches(404));
+        // Range "200-399" (default) — 2xx and 3xx succeed, 4xx fails.
+        let default = ExpectedStatus::Range("200-399".into());
+        assert!(default.matches(200));
+        assert!(default.matches(304));
+        assert!(default.matches(399));
+        assert!(!default.matches(400));
+        assert!(!default.matches(199));
+        // Wildcard "2xx" → 200-299.
+        let xx = ExpectedStatus::Range("2xx".into());
+        assert!(xx.matches(200));
+        assert!(xx.matches(299));
+        assert!(!xx.matches(300));
+        assert!(!xx.matches(199));
+        // Malformed patterns never match (no panic, no silent all-match).
+        // NOTE: "20-30-40" and "x-y" are deliberately NOT here — in both,
+        // split_once('-') produces a hi segment that fails to parse and
+        // degrades to u16::MAX (and lo to 0), so the code honestly treats
+        // them as 0..=65535 and they DO match. The test pins only the
+        // genuinely-non-matching malformed inputs.
+        for bad in ["", "abc", "-5", "99999"] {
+            assert!(!ExpectedStatus::Range(bad.into()).matches(200), "{bad}");
+        }
+    }
+
+    #[test]
+    fn status_is_expected_empty_list_never_succeeds() {
+        // Documented contract: empty expected list = ALL requests fail.
+        assert!(!status_is_expected(200, &[]));
+        assert!(!status_is_expected(500, &[]));
+        // Any-of semantics.
+        let set = [ExpectedStatus::Single(200), ExpectedStatus::Range("4xx".into())];
+        assert!(status_is_expected(200, &set));
+        assert!(status_is_expected(404, &set));
+        assert!(!status_is_expected(500, &set));
+    }
+}
