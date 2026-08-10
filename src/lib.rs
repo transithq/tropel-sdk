@@ -73,7 +73,7 @@
 //! | `Output` trait | ✅ Wired — engine drives registered outputs from the sample stream (emit per batch, flush on close); see the `prometheus` reference extension (`unstable-output`) |
 //! | `Driver` / `DriverInstance` / `VuContext` | ✅ Stable — re-exported and used by the k6 driver (`tropel-input-k6`) |
 //! | `WASM` / `WIT` interface | 🔶 Resolves (parses) — `wit/adapter.wit` in the crate root is validated as a *parseable* WIT package by a `wit-parser` unit test, nothing more. It is the forward-looking Component-Model contract and intentionally lags the shipped C-ABI path; WASM plugins currently use the C ABI in `tropel-wasm`. |
-//! | Engine config (`config` module) | 🔒 NOT re-exported at the root — engine-owned; only the contract-referenced subset lives here and is reachable via `tropel_sdk::config::*` |
+//! | Engine config (`config` module) | ✅ Stable — **not** re-exported at the root, but the module itself is public and semver-committed (F4, review fix): `ExecutionConfig`, `ScenarioConfig`, `ThinkTimeConfig`, `Stage`, `ArrivalRateStage`, `ThresholdConfig`, `OutputConfig`, `ExpectedStatus`, `status_is_expected`. All 9 are genuinely consumed by dependents in the runtime publish set (`tropel-runtime`/`tropel-http`/`tropel-web` use `ExpectedStatus`/`status_is_expected`, `tropel-x-prometheus` uses `OutputConfig`) and by the engine-side crates (`tropel-core` re-exports the set, `tropel-input-k6` builds `ExecutionConfig`/stages from script options) — so they are deliberate public contract, reachable via `tropel_sdk::config::*` |
 
 // ═══════════════════════════════════════════════════════════════════
 // Module tree — the SDK owns these files (moved in the P1 inversion)
