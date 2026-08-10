@@ -383,11 +383,7 @@ pub trait DriverInstance: Send {
     /// calls (e.g. a native `sleep()`) should poll this so a force-stopped VU
     /// stops promptly instead of finishing its current iteration (backlog:
     /// gracefulStop force-stop was advisory only). Default: ignore.
-    fn set_force_stop_flag(
-        &mut self,
-        _flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    ) {
-    }
+    fn set_force_stop_flag(&mut self, _flag: std::sync::Arc<std::sync::atomic::AtomicBool>) {}
 }
 
 // ── Registration types for inventory ──
