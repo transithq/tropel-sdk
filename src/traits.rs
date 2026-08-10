@@ -377,6 +377,17 @@ pub trait DriverInstance: Send {
     /// Run one iteration of this driver.
     /// The `ctx` provides native host functions for HTTP, metrics, etc.
     async fn run_iteration(&mut self, ctx: &mut VuContext) -> Result<()>;
+
+    /// Link this instance to the scheduler's force-stop flag. Called by the
+    /// engine right after [`Driver::init`]; a driver that runs blocking host
+    /// calls (e.g. a native `sleep()`) should poll this so a force-stopped VU
+    /// stops promptly instead of finishing its current iteration (backlog:
+    /// gracefulStop force-stop was advisory only). Default: ignore.
+    fn set_force_stop_flag(
+        &mut self,
+        _flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) {
+    }
 }
 
 // ── Registration types for inventory ──
