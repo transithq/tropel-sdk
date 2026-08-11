@@ -80,8 +80,8 @@ interface tropel-types {
     record scenario-item {
         name: string,
         request: option<request>,
-        prerequest: option<string>,
-        test: option<string>,
+        prerequest: list<string>,
+        test: list<string>,
         assertions: list<string>,
         parent-index: s32,
     }

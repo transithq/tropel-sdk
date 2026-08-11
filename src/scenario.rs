@@ -30,10 +30,19 @@ pub struct ScenarioInfo {
 pub struct ScenarioItem {
     pub name: String,
     pub request: Option<Request>,
-    /// Pre-request script (JS code).
-    pub prerequest: Option<String>,
-    /// Test script (JS code, pm.test).
-    pub test: Option<String>,
+    /// Pre-request scripts (JS code), outer→inner (collection → folder →
+    /// request), each run in its OWN lexical scope. Postman runs each
+    /// script as a separate compilation, so a `const baseUrl` at collection
+    /// level and at request level must NOT collide, a top-level `return`
+    /// only exits its own script, and each script compiles/caches
+    /// independently (backlog §4: the old joined single string shared one
+    /// scope — a redeclared const killed the whole chain).
+    #[serde(default)]
+    pub prerequest: Vec<String>,
+    /// Test scripts (JS code, pm.test), outer→inner, same per-script-scope
+    /// semantics as [`Self::prerequest`].
+    #[serde(default)]
+    pub test: Vec<String>,
     /// Assertions (Postman-style).
     #[serde(default)]
     pub assertions: Vec<String>,
