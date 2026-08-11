@@ -28,6 +28,10 @@ pub struct ScenarioInfo {
 /// An item in a scenario — either a single request or a folder of items.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScenarioItem {
+    /// Postman item id (`item.id` / `_postman_id`), used by
+    /// `setNextRequest` which resolves ids BEFORE names (backlog §4).
+    #[serde(default)]
+    pub id: Option<String>,
     pub name: String,
     pub request: Option<Request>,
     /// Pre-request scripts (JS code), outer→inner (collection → folder →

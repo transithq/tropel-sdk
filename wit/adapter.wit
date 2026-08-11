@@ -78,6 +78,7 @@ interface tropel-types {
     // C-ABI path additionally accepts a recursive nested `items` field;
     // it is not representable in WIT and is omitted here.
     record scenario-item {
+        id: option<string>,
         name: string,
         request: option<request>,
         prerequest: list<string>,
