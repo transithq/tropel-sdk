@@ -217,11 +217,38 @@ impl Default for Request {
 /// `{"__tropel_body": "url_encoded", "fields": …}`) is interpreted as that
 /// variant. Unknown tag values are treated as plain `Json` (the key is
 /// preserved), so only the four exact tag strings are ambiguous.
+/// A single `multipart/form-data` part.
+///
+/// Line 198: form-data parts must distinguish text fields from file
+/// uploads. A file part carries its `filename`, per-part Content-Type and
+/// RAW bytes — the old `HashMap<String, String>` forced `from_utf8_lossy`
+/// (a PNG became U+FFFD soup of a different length, so `data_sent` was
+/// wrong) and the multipart builder wrote no `filename=` (mainstream
+/// parsers key the file branch off `filename`).
+///
+/// NOTE: this CHANGED the Body wire format for `form_data` — `fields` was
+/// a JSON object (name → value) and is now a JSON ARRAY of part objects.
+/// Old spooled/worker-serialized bodies with the object shape fail
+/// `serde_json::from_value` and collapse to an empty vec; all consumers
+/// were upgraded together in line 198.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FormDataPart {
+    pub name: String,
+    /// Text-field value (`None` for file parts).
+    pub value: Option<String>,
+    /// File part: original file name (`None` for text fields).
+    pub filename: Option<String>,
+    /// File part: per-part Content-Type (`None` for text fields).
+    pub mime: Option<String>,
+    /// File part: raw bytes (`None` for text fields or missing files).
+    pub data: Option<Vec<u8>>,
+}
+
 #[derive(Debug, Clone)]
 pub enum Body {
     Raw(String),
     Json(serde_json::Value),
-    FormData(HashMap<String, String>),
+    FormData(Vec<FormDataPart>),
     UrlEncoded(HashMap<String, String>),
     Binary(Vec<u8>),
     GraphQL {
@@ -532,6 +559,10 @@ pub struct Cookie {
     pub secure: Option<bool>,
     pub same_site: Option<String>,
     pub expires: Option<String>,
+    /// `Max-Age` attribute in seconds. `#[serde(default)]` keeps old wire
+    /// payloads (distributed workers, spool, replay) deserializing cleanly.
+    #[serde(default)]
+    pub max_age: Option<i64>,
 }
 
 /// Auth configuration.
@@ -850,9 +881,22 @@ mod tests {
         // match ANY JSON, so FormData/UrlEncoded/Binary/GraphQL were
         // unreachable on deserialize — every round-trip silently converted
         // them to Json (Content-Type flips, wire bytes change).
-        let mut form = HashMap::new();
-        form.insert("a".to_string(), "1".to_string());
-        form.insert("b".to_string(), "2".to_string());
+        let form = vec![
+            FormDataPart {
+                name: "a".into(),
+                value: Some("1".into()),
+                filename: None,
+                mime: None,
+                data: None,
+            },
+            FormDataPart {
+                name: "file".into(),
+                value: None,
+                filename: Some("photo.png".into()),
+                mime: Some("image/png".into()),
+                data: Some(vec![0x89, 0x50, 0x4e, 0x47]),
+            },
+        ];
         let mut url = HashMap::new();
         url.insert("q".to_string(), "hello world".to_string());
         let mut vars = HashMap::new();

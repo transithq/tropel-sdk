@@ -102,8 +102,8 @@ pub mod registration;
 
 pub use scenario::{Scenario, ScenarioInfo, ScenarioItem};
 pub use types::{
-    ApiKeyLocation, AuthConfig, Body, CertificateConfig, Cookie, Method, Request, Response,
-    ResponseType, Sample, SampleType, Timings,
+    ApiKeyLocation, AuthConfig, Body, CertificateConfig, Cookie, FormDataPart, Method, Request,
+    Response, ResponseType, Sample, SampleType, Timings,
 };
 
 // ═══════════════════════════════════════════════════════════════════
