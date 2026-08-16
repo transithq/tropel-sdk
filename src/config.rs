@@ -51,7 +51,7 @@ pub struct ScenarioConfig {
     /// When to start this scenario (e.g. "5s", "30s").
     /// Defaults to "0s" — starts immediately alongside other scenarios.
     /// Use staggered values to sequence scenario start times.
-    #[serde(default)]
+    #[serde(default = "default_start_time", alias = "startTime")]
     pub start_time: String,
     /// k6 `exec` selection — which exported function/flow this scenario runs.
     /// Drivers that support named entry points (e.g. the k6 driver) install
@@ -63,7 +63,7 @@ pub struct ScenarioConfig {
 
 /// How to execute the load test.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[serde(tag = "type", deny_unknown_fields)]
 pub enum ExecutionConfig {
     #[serde(rename = "constant-vus")]
     ConstantVus {
@@ -80,6 +80,7 @@ pub enum ExecutionConfig {
     #[serde(rename = "ramping-vus")]
     RampingVus {
         stages: Vec<Stage>,
+        #[serde(alias = "startVUs")]
         start_vus: u32,
         /// How long to wait for a VU to finish its current iteration during
         /// a ramp-down stage before moving on. Defaults to 30s.
@@ -102,7 +103,9 @@ pub enum ExecutionConfig {
         #[serde(default = "default_time_unit", alias = "timeUnit")]
         time_unit: String,
         duration: String,
+        #[serde(alias = "preAllocatedVUs")]
         pre_alloc_vus: u32,
+        #[serde(alias = "maxVUs")]
         max_vus: u32,
         /// How long to wait for in-flight iterations to finish after the
         /// test duration expires. Defaults to 30s if not set.
@@ -115,6 +118,7 @@ pub enum ExecutionConfig {
     #[serde(rename = "shared-iterations")]
     SharedIterations {
         iterations: u64,
+        #[serde(alias = "maxDuration")]
         max_duration: Option<String>,
         vus: u32,
         /// How long to wait for in-flight iterations to finish after the
@@ -130,7 +134,7 @@ pub enum ExecutionConfig {
     #[serde(rename = "ramping-arrival-rate")]
     RampingArrivalRate {
         /// Starting rate (iterations/sec).
-        #[serde(default)]
+        #[serde(default, alias = "startRate")]
         start_rate: f64,
         /// Stages defining how the rate changes over time.
         stages: Vec<ArrivalRateStage>,
@@ -138,10 +142,10 @@ pub enum ExecutionConfig {
         #[serde(default = "default_time_unit", alias = "timeUnit")]
         time_unit: String,
         /// Pre-allocated VUs.
-        #[serde(default = "default_pre_alloc")]
+        #[serde(default = "default_pre_alloc", alias = "preAllocatedVUs")]
         pre_alloc_vus: u32,
         /// Maximum VUs.
-        #[serde(default = "default_max_vus")]
+        #[serde(default = "default_max_vus", alias = "maxVUs")]
         max_vus: u32,
         /// How long to wait for in-flight iterations to finish after the
         /// test duration expires. Defaults to 30s if not set.
@@ -180,6 +184,7 @@ pub enum ExecutionConfig {
         /// Initial VU count.
         vus: u32,
         /// Maximum VU count the control API may scale up to.
+        #[serde(alias = "maxVUs")]
         max_vus: u32,
         /// Optional wall-clock limit. When unset, the run continues until
         /// the control API requests a stop (or a signal / threshold aborts).
@@ -330,6 +335,10 @@ fn default_time_unit() -> String {
     "1s".to_string()
 }
 
+fn default_start_time() -> String {
+    "0s".to_string()
+}
+
 fn default_pre_alloc() -> u32 {
     1
 }
@@ -344,7 +353,7 @@ pub struct ThresholdConfig {
     /// Threshold expression.
     pub expression: String,
     /// Whether to abort the test on failure.
-    #[serde(default)]
+    #[serde(default, alias = "abortOnFail")]
     pub abort_on_fail: bool,
     /// Grace period before abortOnFail activates (e.g. "30s").
     /// During this time metrics are collected but failures won't abort.
@@ -951,5 +960,136 @@ mod expected_status_tests {
             }
             other => panic!("expected ConstantArrivalRate, got {other:?}"),
         }
+    }
+
+    /// W0 P0#4: k6 camelCase scenario options must map onto the snake_case
+    /// SDK fields (`startVUs` → `start_vus`, `preAllocatedVUs` →
+    /// `pre_alloc_vus`, `maxVUs` → `max_vus`, `startRate` → `start_rate`,
+    /// `maxDuration` → `max_duration`, `startTime` → `start_time`) instead of
+    /// being silently dropped, and `start_time` must default to "0s" (the
+    /// old `#[serde(default)]` on a String produced "" which failed
+    /// `parse_duration` — the most common config errored).
+    #[test]
+    fn k6_camelcase_scenario_options_map_and_typos_error() {
+        // RampingVus: startVUs → start_vus.
+        let json = r#"{
+            "type": "ramping-vus",
+            "startVUs": 7,
+            "stages": [{"duration": "30s", "target": 20}]
+        }"#;
+        match serde_json::from_str::<ExecutionConfig>(json).unwrap() {
+            ExecutionConfig::RampingVus { start_vus, .. } => assert_eq!(start_vus, 7),
+            other => panic!("expected RampingVus, got {other:?}"),
+        }
+
+        // ConstantArrivalRate: preAllocatedVUs + maxVUs → pre_alloc_vus/max_vus.
+        let json = r#"{
+            "type": "constant-arrival-rate",
+            "rate": 100.0,
+            "duration": "30s",
+            "preAllocatedVUs": 500,
+            "maxVUs": 2000
+        }"#;
+        match serde_json::from_str::<ExecutionConfig>(json).unwrap() {
+            ExecutionConfig::ConstantArrivalRate {
+                pre_alloc_vus,
+                max_vus,
+                ..
+            } => {
+                assert_eq!(pre_alloc_vus, 500);
+                assert_eq!(max_vus, 2000);
+            }
+            other => panic!("expected ConstantArrivalRate, got {other:?}"),
+        }
+
+        // RampingArrivalRate: startRate + preAllocatedVUs + maxVUs.
+        let json = r#"{
+            "type": "ramping-arrival-rate",
+            "startRate": 10,
+            "timeUnit": "1s",
+            "preAllocatedVUs": 500,
+            "maxVUs": 2000,
+            "stages": [{"duration": "30s", "target": 100}]
+        }"#;
+        match serde_json::from_str::<ExecutionConfig>(json).unwrap() {
+            ExecutionConfig::RampingArrivalRate {
+                start_rate,
+                pre_alloc_vus,
+                max_vus,
+                ..
+            } => {
+                assert_eq!(start_rate, 10.0);
+                assert_eq!(pre_alloc_vus, 500);
+                assert_eq!(max_vus, 2000);
+            }
+            other => panic!("expected RampingArrivalRate, got {other:?}"),
+        }
+
+        // SharedIterations: maxDuration → max_duration.
+        let json = r#"{
+            "type": "shared-iterations",
+            "iterations": 1000,
+            "vus": 10,
+            "maxDuration": "2m"
+        }"#;
+        match serde_json::from_str::<ExecutionConfig>(json).unwrap() {
+            ExecutionConfig::SharedIterations { max_duration, .. } => {
+                assert_eq!(max_duration.as_deref(), Some("2m"));
+            }
+            other => panic!("expected SharedIterations, got {other:?}"),
+        }
+
+        // ScenarioConfig.start_time: startTime alias + "0s" default.
+        let json = r#"{
+            "execution": {"type": "constant-vus", "vus": 1, "duration": "10s"},
+            "startTime": "5s"
+        }"#;
+        let sc: ScenarioConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(sc.start_time, "5s");
+        let json = r#"{
+            "execution": {"type": "constant-vus", "vus": 1, "duration": "10s"}
+        }"#;
+        let sc: ScenarioConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(sc.start_time, "0s");
+
+        // ExternallyControlled: maxVUs → max_vus.
+        let json = r#"{
+            "type": "externally-controlled",
+            "vus": 5,
+            "maxVUs": 50
+        }"#;
+        match serde_json::from_str::<ExecutionConfig>(json).unwrap() {
+            ExecutionConfig::ExternallyControlled { max_vus, .. } => assert_eq!(max_vus, 50),
+            other => panic!("expected ExternallyControlled, got {other:?}"),
+        }
+
+        // ThresholdConfig: abortOnFail → abort_on_fail.
+        let json = r#"{"expression": "http_req_failed < 0.01", "abortOnFail": true}"#;
+        let th: ThresholdConfig = serde_json::from_str(json).unwrap();
+        assert!(th.abort_on_fail);
+
+        // deny_unknown_fields: a typo'd camelCase option is a hard error, not
+        // a silent drop (the W0 P0#4 failure mode: maxVU instead of maxVUs).
+        let json = r#"{
+            "type": "constant-arrival-rate",
+            "rate": 100.0,
+            "duration": "30s",
+            "preAllocatedVUs": 500,
+            "maxVU": 2000
+        }"#;
+        assert!(
+            serde_json::from_str::<ExecutionConfig>(json).is_err(),
+            "typo'd maxVU must be a hard config error"
+        );
+        let json = r#"{
+            "type": "constant-vus",
+            "vus": 1,
+            "duration": "10s",
+            "vuss": 2
+        }"#;
+        assert!(
+            serde_json::from_str::<ExecutionConfig>(json).is_err(),
+            "typo'd vuss must be a hard config error"
+        );
     }
 }
