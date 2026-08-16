@@ -682,7 +682,7 @@ mod tests {
 /// - A pattern with wildcard: `"2xx"`, `"3xx"`
 ///
 /// Default: `["200-399"]` — all 2xx and 3xx are considered success.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 pub enum ExpectedStatus {
     Single(u16),
@@ -690,27 +690,93 @@ pub enum ExpectedStatus {
 }
 
 impl ExpectedStatus {
+    /// Strict, fallible parse of an expected-status pattern (W0 P0#3).
+    /// Accepts a single code (`"200"`), a range (`"200-399"`), or a
+    /// wildcard (`"2xx"`). Rejects malformed input that the old `matches`
+    /// silently degraded to a 0..=65535 all-match — `"200-"`, `"-"`,
+    /// `"abc-def"`, `"2xx-3xx"`, `"20-30-40"` all used to make a server
+    /// that returned nothing but 500s pass every check. Also rejects a
+    /// wildcard base whose `base * 100` overflows `u16` (prefix ≥ 656 used
+    /// to panic in debug / wrap in release: `"656xx"` matched 64–163).
+    pub fn parse(s: &str) -> std::result::Result<ExpectedStatus, String> {
+        let s = s.trim();
+        if s.is_empty() {
+            return Err("expected-status pattern is empty".into());
+        }
+        if let Some((lo, hi)) = s.split_once('-') {
+            // Range "200-399": exactly one dash, both sides valid u16, lo <= hi.
+            if hi.contains('-') {
+                return Err(format!("invalid expected-status range '{s}'"));
+            }
+            let lo: u16 = lo
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid expected-status range '{s}'"))?;
+            let hi: u16 = hi
+                .trim()
+                .parse()
+                .map_err(|_| format!("invalid expected-status range '{s}'"))?;
+            if lo > hi {
+                return Err(format!("invalid expected-status range '{s}' (lo > hi)"));
+            }
+            return Ok(ExpectedStatus::Range(s.to_string()));
+        }
+        if let Some(prefix) = s.strip_suffix("xx") {
+            // Wildcard "2xx": prefix parses as u16 AND the full 100-wide
+            // span [base*100, base*100+99] fits u16 (base <= 654). A base of
+            // 655 passes base*100 (65500) but base*100+99 overflows, so the
+            // pattern could never match anything — reject it rather than
+            // accepting an unmatchable entry (W0 P0#3).
+            let base: u16 = prefix
+                .parse()
+                .map_err(|_| format!("invalid expected-status wildcard '{s}'"))?;
+            let lo = base
+                .checked_mul(100)
+                .ok_or_else(|| format!("expected-status wildcard '{s}' overflows"))?;
+            lo.checked_add(99)
+                .ok_or_else(|| format!("expected-status wildcard '{s}' overflows"))?;
+            return Ok(ExpectedStatus::Range(s.to_string()));
+        }
+        // Single code "200" (also "200" as a bare string).
+        s.parse::<u16>()
+            .map(ExpectedStatus::Single)
+            .map_err(|_| format!("invalid expected status '{s}'"))
+    }
+
     /// Check if a given status code matches this expected status entry.
+    ///
+    /// Fail-closed (W0 P0#3): a malformed pattern NEVER matches — the old
+    /// `unwrap_or(0)` / `unwrap_or(u16::MAX)` degraded `"200-"` etc. to
+    /// `0..=65535`, so a config typo produced a perfect green run against a
+    /// server returning nothing but 500s. Wildcard math is checked, so a
+    /// prefix ≥ 656 can neither panic in debug nor silently wrap in release.
     pub fn matches(&self, code: u16) -> bool {
         match self {
             ExpectedStatus::Single(c) => *c == code,
             ExpectedStatus::Range(s) => {
                 // Support patterns: "200-399" (range), "2xx" (wildcard), "200" (single)
                 if let Some((lo, hi)) = s.split_once('-') {
-                    // Range: "200-299"
-                    let lo: u16 = lo.trim().parse().unwrap_or(0);
-                    let hi: u16 = hi.trim().parse().unwrap_or(u16::MAX);
-                    code >= lo && code <= hi
-                } else if s.ends_with("xx") {
-                    // Wildcard: "2xx" → 200-299, "3xx" → 300-399
-                    let prefix = &s[..s.len() - 2];
-                    if let Ok(base) = prefix.parse::<u16>() {
-                        let lo = base * 100;
-                        let hi = lo + 99;
-                        code >= lo && code <= hi
-                    } else {
-                        false
+                    if hi.contains('-') {
+                        return false; // "20-30-40" — never all-match
                     }
+                    let Ok(lo) = lo.trim().parse::<u16>() else {
+                        return false;
+                    };
+                    let Ok(hi) = hi.trim().parse::<u16>() else {
+                        return false;
+                    };
+                    lo <= hi && code >= lo && code <= hi
+                } else if let Some(prefix) = s.strip_suffix("xx") {
+                    let Ok(base) = prefix.parse::<u16>() else {
+                        return false;
+                    };
+                    let Some(lo) = base.checked_mul(100) else {
+                        return false;
+                    };
+                    let Some(hi) = lo.checked_add(99) else {
+                        return false;
+                    };
+                    code >= lo && code <= hi
                 } else if let Ok(c) = s.parse::<u16>() {
                     c == code
                 } else {
@@ -718,6 +784,45 @@ impl ExpectedStatus {
                 }
             }
         }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ExpectedStatus {
+    /// Validate at config load (W0 P0#3): a malformed pattern string is a
+    /// hard config error, not a silent all-match. A JSON number becomes
+    /// [`ExpectedStatus::Single`]; a string goes through [`ExpectedStatus::parse`]
+    /// and errors on anything malformed.
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        struct ExpectedStatusVisitor;
+        impl<'de> serde::de::Visitor<'de> for ExpectedStatusVisitor {
+            type Value = ExpectedStatus;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(
+                    "a status code number, or a pattern string like \"200\", \"2xx\", \"200-399\"",
+                )
+            }
+
+            fn visit_u64<E: serde::de::Error>(self, v: u64) -> std::result::Result<Self::Value, E> {
+                let c = u16::try_from(v)
+                    .map_err(|_| E::custom(format!("status code out of range: {v}")))?;
+                Ok(ExpectedStatus::Single(c))
+            }
+
+            fn visit_i64<E: serde::de::Error>(self, v: i64) -> std::result::Result<Self::Value, E> {
+                let c = u16::try_from(v)
+                    .map_err(|_| E::custom(format!("status code out of range: {v}")))?;
+                Ok(ExpectedStatus::Single(c))
+            }
+
+            fn visit_str<E: serde::de::Error>(
+                self,
+                s: &str,
+            ) -> std::result::Result<Self::Value, E> {
+                ExpectedStatus::parse(s).map_err(E::custom)
+            }
+        }
+        d.deserialize_any(ExpectedStatusVisitor)
     }
 }
 
@@ -753,15 +858,46 @@ mod expected_status_tests {
         assert!(xx.matches(299));
         assert!(!xx.matches(300));
         assert!(!xx.matches(199));
-        // Malformed patterns never match (no panic, no silent all-match).
-        // NOTE: "20-30-40" and "x-y" are deliberately NOT here — in both,
-        // split_once('-') produces a hi segment that fails to parse and
-        // degrades to u16::MAX (and lo to 0), so the code honestly treats
-        // them as 0..=65535 and they DO match. The test pins only the
-        // genuinely-non-matching malformed inputs.
-        for bad in ["", "abc", "-5", "99999"] {
+        // W0 P0#3: malformed patterns NEVER match (fail-closed). The old
+        // unwrap_or(0)/unwrap_or(u16::MAX) degraded "200-", "-", "abc-def",
+        // "2xx-3xx", "20-30-40" to 0..=65535 — a config typo produced a
+        // perfect green run against a server returning nothing but 500s.
+        // "656xx" used to panic in debug / wrap to 64-163 in release.
+        for bad in [
+            "", "abc", "-5", "99999", "200-", "-", "abc-def", "2xx-3xx", "20-30-40", "655xx",
+            "656xx",
+        ] {
             assert!(!ExpectedStatus::Range(bad.into()).matches(200), "{bad}");
+            assert!(!ExpectedStatus::Range(bad.into()).matches(500), "{bad}");
+            assert!(
+                ExpectedStatus::parse(bad).is_err(),
+                "parse must reject '{bad}'"
+            );
         }
+        // Valid patterns still parse and match.
+        assert!(ExpectedStatus::parse("200-399").is_ok());
+        assert!(ExpectedStatus::parse("2xx").is_ok());
+        assert!(ExpectedStatus::parse("200").is_ok());
+        // "654xx" is the widest wildcard whose full 100-wide span fits u16
+        // (65400-65499); "655xx" and above overflow and are rejected above.
+        assert!(ExpectedStatus::parse("654xx").is_ok());
+    }
+
+    /// W0 P0#3: deserializing a malformed pattern string is a hard config
+    /// error (validated at config load), not a silent all-match.
+    #[test]
+    fn expected_status_deserialize_rejects_malformed() {
+        for bad in [
+            "200-", "-", "abc-def", "2xx-3xx", "20-30-40", "655xx", "656xx", "x-y",
+        ] {
+            let res: std::result::Result<ExpectedStatus, _> =
+                serde_json::from_str(&format!("\"{bad}\""));
+            assert!(res.is_err(), "deserialize must reject '{bad}'");
+        }
+        // Valid forms still deserialize.
+        assert!(serde_json::from_str::<ExpectedStatus>("200").is_ok());
+        assert!(serde_json::from_str::<ExpectedStatus>("\"2xx\"").is_ok());
+        assert!(serde_json::from_str::<ExpectedStatus>("\"200-399\"").is_ok());
     }
 
     #[test]
