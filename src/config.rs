@@ -96,6 +96,10 @@ pub enum ExecutionConfig {
     #[serde(rename = "constant-arrival-rate")]
     ConstantArrivalRate {
         rate: f64,
+        /// Time unit for the rate (e.g. "1s", "1m"). The `rate` is
+        /// expressed PER this unit, not per second — the scheduler converts
+        /// to per-second at dispatch. Defaults to "1s" (k6 parity).
+        #[serde(default = "default_time_unit", alias = "timeUnit")]
         time_unit: String,
         duration: String,
         pre_alloc_vus: u32,
@@ -130,8 +134,8 @@ pub enum ExecutionConfig {
         start_rate: f64,
         /// Stages defining how the rate changes over time.
         stages: Vec<ArrivalRateStage>,
-        /// Time unit for the rate (e.g. "1s").
-        #[serde(default = "default_time_unit")]
+        /// Time unit for the rate (e.g. "1s", "1m").
+        #[serde(default = "default_time_unit", alias = "timeUnit")]
         time_unit: String,
         /// Pre-allocated VUs.
         #[serde(default = "default_pre_alloc")]
@@ -773,5 +777,43 @@ mod expected_status_tests {
         assert!(status_is_expected(200, &set));
         assert!(status_is_expected(404, &set));
         assert!(!status_is_expected(500, &set));
+    }
+
+    /// W0 P0#1: `timeUnit` must accept the k6 camelCase alias and default
+    /// to "1s" when omitted (matching `RampingArrivalRate`'s sibling field).
+    #[test]
+    fn constant_arrival_rate_time_unit_alias_and_default() {
+        // CamelCase alias round-trips (internally-tagged enum, tag = "type").
+        let json = r#"{
+            "type": "constant-arrival-rate",
+            "rate": 100.0,
+            "timeUnit": "1m",
+            "duration": "30s",
+            "pre_alloc_vus": 5,
+            "max_vus": 20
+        }"#;
+        let exec: ExecutionConfig = serde_json::from_str(json).unwrap();
+        match exec {
+            ExecutionConfig::ConstantArrivalRate { time_unit, .. } => {
+                assert_eq!(time_unit, "1m");
+            }
+            other => panic!("expected ConstantArrivalRate, got {other:?}"),
+        }
+
+        // Omitted → default "1s" (the identity case, k6 parity).
+        let json = r#"{
+            "type": "constant-arrival-rate",
+            "rate": 10.0,
+            "duration": "30s",
+            "pre_alloc_vus": 5,
+            "max_vus": 20
+        }"#;
+        let exec: ExecutionConfig = serde_json::from_str(json).unwrap();
+        match exec {
+            ExecutionConfig::ConstantArrivalRate { time_unit, .. } => {
+                assert_eq!(time_unit, "1s");
+            }
+            other => panic!("expected ConstantArrivalRate, got {other:?}"),
+        }
     }
 }
