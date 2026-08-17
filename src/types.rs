@@ -154,9 +154,14 @@ pub struct Request {
     /// URL string (may contain {{variables}}).
     pub url: String,
     pub method: Method,
-    /// Request headers.
-    #[serde(default)]
-    pub headers: HashMap<String, String>,
+    /// Request headers, in DECLARATION ORDER with duplicates preserved
+    /// (W2 #203: the old `HashMap` collapsed two `Cookie:` headers into one
+    /// and let header order vary request-to-request). Deserializes from
+    /// BOTH the legacy object form (`{"name":"value"}`) and the
+    /// order/duplicate-preserving array-of-pairs form; serialization emits
+    /// the array form so duplicates and order survive a round-trip.
+    #[serde(default, deserialize_with = "de_headers")]
+    pub headers: Vec<(String, String)>,
     /// Query parameters.
     #[serde(default)]
     pub query_params: HashMap<String, String>,
@@ -176,6 +181,25 @@ pub struct Request {
     pub response_type: ResponseType,
 }
 
+/// Deserialize request headers from EITHER the legacy JSON object form
+/// (`{"name": "value"}`) or the duplicate/order-preserving array form
+/// (`[["name", "value"], ...]`) (W2 #203).
+fn de_headers<'de, D>(deserializer: D) -> Result<Vec<(String, String)>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Headers {
+        List(Vec<(String, String)>),
+        Map(std::collections::BTreeMap<String, String>),
+    }
+    Ok(match Headers::deserialize(deserializer)? {
+        Headers::List(list) => list,
+        Headers::Map(map) => map.into_iter().collect(),
+    })
+}
+
 fn default_true() -> bool {
     true
 }
@@ -185,7 +209,7 @@ impl Default for Request {
         Self {
             url: String::new(),
             method: Method::GET,
-            headers: HashMap::new(),
+            headers: Vec::new(),
             query_params: HashMap::new(),
             body: None,
             auth: None,
@@ -249,7 +273,9 @@ pub enum Body {
     Raw(String),
     Json(serde_json::Value),
     FormData(Vec<FormDataPart>),
-    UrlEncoded(HashMap<String, String>),
+    /// Duplicate keys preserved in declaration order (W2 #203: the old
+    /// `HashMap` collapsed `tag=a`+`tag=b` into one field).
+    UrlEncoded(Vec<(String, String)>),
     Binary(Vec<u8>),
     GraphQL {
         query: String,
@@ -320,7 +346,7 @@ impl<'de> Deserialize<'de> for Body {
                         "url_encoded" => {
                             let fields = obj
                                 .remove("fields")
-                                .and_then(|f| serde_json::from_value(f).ok())
+                                .map(de_urlencoded_fields)
                                 .unwrap_or_default();
                             Ok(Body::UrlEncoded(fields))
                         }
@@ -361,6 +387,30 @@ impl<'de> Deserialize<'de> for Body {
             }
             other => Ok(Body::Json(other)),
         }
+    }
+}
+
+/// Deserialize urlencoded fields from EITHER the legacy JSON object form
+/// (`{"a": "1"}`) or the duplicate-preserving array-of-pairs form
+/// (`[["a", "1"], ...]`) (W2 #203).
+fn de_urlencoded_fields(value: serde_json::Value) -> Vec<(String, String)> {
+    match value {
+        serde_json::Value::Array(pairs) => pairs
+            .into_iter()
+            .filter_map(|p| match p {
+                serde_json::Value::Array(mut kv) if kv.len() == 2 => {
+                    let key = kv.remove(0).as_str().unwrap_or_default().to_string();
+                    let val = kv.remove(0).as_str().unwrap_or_default().to_string();
+                    Some((key, val))
+                }
+                _ => None,
+            })
+            .collect(),
+        serde_json::Value::Object(map) => map
+            .into_iter()
+            .map(|(k, v)| (k, v.as_str().unwrap_or_default().to_string()))
+            .collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -897,8 +947,7 @@ mod tests {
                 data: Some(vec![0x89, 0x50, 0x4e, 0x47]),
             },
         ];
-        let mut url = HashMap::new();
-        url.insert("q".to_string(), "hello world".to_string());
+        let url = vec![("q".to_string(), "hello world".to_string())];
         let mut vars = HashMap::new();
         vars.insert("id".to_string(), serde_json::json!(42));
 
