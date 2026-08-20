@@ -1,9 +1,9 @@
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
-use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
 
 /// HTTP method.
@@ -449,7 +449,7 @@ impl Body {
 /// HTTP response with lazy, memoized body decoding.
 ///
 /// The body is stored as raw `Vec<u8>`. `body_text()` and `body_json()`
-/// decode on first access and memoize the result in a `OnceCell`, so
+/// decode on first access and memoize the result in a `OnceLock`, so
 /// repeated script access (assert + extract + log on the same response —
 /// the normal Postman/k6 pattern) decodes ONCE instead of re-cloning a
 /// multi-MB body and re-parsing it on every call. The caches are
@@ -468,10 +468,10 @@ pub struct Response {
     pub body: Vec<u8>,
     /// Memoized UTF-8 decode of `body` (see `body_text()`).
     #[serde(skip)]
-    pub text_cache: OnceCell<Option<String>>,
+    pub text_cache: OnceLock<Option<String>>,
     /// Memoized JSON parse of `body` (see `body_json()`).
     #[serde(skip)]
-    pub json_cache: OnceCell<Option<serde_json::Value>>,
+    pub json_cache: OnceLock<Option<serde_json::Value>>,
     pub response_time: Duration,
     pub timings: Option<Timings>,
     pub cookies: Vec<Cookie>,
@@ -892,7 +892,7 @@ mod tests {
         // returns `''`, not `undefined`).
         //
         // NOTE: each Response gets FRESH caches (never `..base.clone()` — the
-        // initialized OnceCell would memoize the first result onto the next).
+        // initialized OnceLock would memoize the first result onto the next).
         fn resp_with(body: Vec<u8>) -> Response {
             Response {
                 url: String::new(),
