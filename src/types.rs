@@ -455,7 +455,7 @@ impl Body {
 /// multi-MB body and re-parsing it on every call. The caches are
 /// `#[serde(skip)]` (never serialized): a distributed/spool round-trip
 /// carries only the raw `body` bytes and the cache is rebuilt on demand.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Response {
     /// The URL that produced THIS response. For a redirect chain each hop
     /// carries its own URL; the final response carries the final URL (what
@@ -488,6 +488,30 @@ pub struct Response {
     /// emit one http_req_* sample set PER hop plus the final response.
     #[serde(default)]
     pub redirects: Vec<Response>,
+}
+
+// Hand-written Clone: the derived Clone would copy the OnceLock memoization
+// caches (text_cache, json_cache), so a clone-then-mutate-body returns the
+// stale text from the original body. Skipping the caches lets them be
+// rebuilt on demand by the cloned Response's own body.
+impl Clone for Response {
+    fn clone(&self) -> Self {
+        Self {
+            url: self.url.clone(),
+            status_code: self.status_code,
+            status_text: self.status_text.clone(),
+            headers: self.headers.clone(),
+            body: self.body.clone(),
+            text_cache: OnceLock::new(),
+            json_cache: OnceLock::new(),
+            response_time: self.response_time,
+            timings: self.timings.clone(),
+            cookies: self.cookies.clone(),
+            size: self.size,
+            request_body_size: self.request_body_size,
+            redirects: self.redirects.clone(),
+        }
+    }
 }
 
 impl Response {
