@@ -696,6 +696,11 @@ mod tests {
 pub enum ExpectedStatus {
     Single(u16),
     Range(String),
+    /// Pre-parsed bounds (lo, hi) — built once at config load, avoids
+    /// re-parsing the range string on every status-code check (backlog
+    /// line 353).
+    #[serde(skip)]
+    ParsedRange(u16, u16),
 }
 
 impl ExpectedStatus {
@@ -762,6 +767,8 @@ impl ExpectedStatus {
     pub fn matches(&self, code: u16) -> bool {
         match self {
             ExpectedStatus::Single(c) => *c == code,
+            // Backlog line 353: pre-parsed bounds — no string parsing per call.
+            ExpectedStatus::ParsedRange(lo, hi) => code >= *lo && code <= *hi,
             ExpectedStatus::Range(s) => {
                 // Support patterns: "200-399" (range), "2xx" (wildcard), "200" (single)
                 if let Some((lo, hi)) = s.split_once('-') {
@@ -792,6 +799,33 @@ impl ExpectedStatus {
                     false
                 }
             }
+        }
+    }
+
+    /// Pre-parse a Range variant into ParsedRange for hot-path efficiency.
+    pub fn pre_parse(&self) -> ExpectedStatus {
+        match self {
+            ExpectedStatus::Range(s) => {
+                if let Some((lo, hi)) = s.split_once('-') {
+                    if let (Ok(l), Ok(h)) = (lo.trim().parse::<u16>(), hi.trim().parse::<u16>()) {
+                        if l <= h {
+                            return ExpectedStatus::ParsedRange(l, h);
+                        }
+                    }
+                } else if let Some(prefix) = s.strip_suffix("xx") {
+                    if let Ok(base) = prefix.parse::<u16>() {
+                        if let Some(lo) = base.checked_mul(100) {
+                            if let Some(hi) = lo.checked_add(99) {
+                                return ExpectedStatus::ParsedRange(lo, hi);
+                            }
+                        }
+                    }
+                } else if let Ok(c) = s.parse::<u16>() {
+                    return ExpectedStatus::Single(c);
+                }
+                self.clone()
+            }
+            _ => self.clone(),
         }
     }
 }
