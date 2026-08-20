@@ -794,6 +794,30 @@ impl Default for TagMap {
     }
 }
 
+// ── Static interned tag keys (backlog line 352) ──
+// Compile-time constant tag keys ("url", "method", etc.) are inserted
+// on every HTTP request hop. Using static Arc<str> avoids re-allocating
+// them from &str on each insert. The corresponding VALUES are still
+// dynamic (per-response status, url, etc.).
+pub mod tag_keys {
+    use std::sync::{Arc, LazyLock};
+
+    macro_rules! intern_key {
+        ($name:ident, $val:expr) => {
+            pub static $name: LazyLock<Arc<str>> = LazyLock::new(|| Arc::from($val));
+        };
+    }
+
+    intern_key!(URL, "url");
+    intern_key!(METHOD, "method");
+    intern_key!(STATUS, "status");
+    intern_key!(NAME, "name");
+    intern_key!(GROUP, "group");
+    intern_key!(PROTO, "proto");
+    intern_key!(SERVICE, "service");
+    intern_key!(METHOD_GRPC, "method");
+}
+
 impl Serialize for TagMap {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeMap;
