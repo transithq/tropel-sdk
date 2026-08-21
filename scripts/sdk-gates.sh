@@ -80,7 +80,7 @@ mkdir -p "$WORK/sample-ext/src"
 cat > "$WORK/sample-ext/Cargo.toml" <<EOF
 # An empty [workspace] table stops cargo's upward workspace search at this
 # temp dir — the sample must build as an independent crate, never as part of
-# the SDK workspace (which a `path` dep inside the repo tree would join).
+# the SDK workspace (which a \`path\` dep inside the repo tree would join).
 [workspace]
 [package]
 name = "sample-ext"
