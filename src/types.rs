@@ -200,6 +200,10 @@ where
     })
 }
 
+fn default_protocol() -> String {
+    "HTTP/1.1".to_string()
+}
+
 fn default_true() -> bool {
     true
 }
@@ -464,6 +468,9 @@ pub struct Response {
     pub url: String,
     pub status_code: u16,
     pub status_text: String,
+    /// Actual protocol version (e.g. "HTTP/1.1", "HTTP/2").
+    #[serde(default = "default_protocol")]
+    pub protocol: String,
     pub headers: HashMap<String, String>,
     pub body: Vec<u8>,
     /// Memoized UTF-8 decode of `body` (see `body_text()`).
@@ -500,6 +507,7 @@ impl Clone for Response {
             url: self.url.clone(),
             status_code: self.status_code,
             status_text: self.status_text.clone(),
+            protocol: self.protocol.clone(),
             headers: self.headers.clone(),
             body: self.body.clone(),
             text_cache: OnceLock::new(),
@@ -946,6 +954,7 @@ mod tests {
                 url: String::new(),
                 status_code: 200,
                 status_text: "OK".into(),
+                protocol: Default::default(),
                 headers: Default::default(),
                 body,
                 text_cache: Default::default(),
