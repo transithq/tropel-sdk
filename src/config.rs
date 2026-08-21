@@ -305,12 +305,50 @@ impl ExecutionConfig {
                 graceful_stop: Some("30s".to_string()),
                 think_time,
             },
-            _ => ExecutionConfig::ConstantVus {
+            "per-vu-iterations" => ExecutionConfig::PerVUIterations {
+                iterations: iterations.unwrap_or(100),
+                max_duration: duration,
+                vus: vus.unwrap_or(1),
+                graceful_stop: Some("30s".to_string()),
+                think_time,
+            },
+            "ramping-arrival-rate" => ExecutionConfig::RampingArrivalRate {
+                start_rate: vus.unwrap_or(1) as f64,
+                time_unit: "1s".to_string(),
+                stages: stages
+                    .as_deref()
+                    .and_then(|s| serde_json::from_str::<Vec<ArrivalRateStage>>(s).ok())
+                    .unwrap_or_default(),
+                pre_alloc_vus: 1,
+                max_vus: vus.unwrap_or(10).max(10),
+                graceful_stop: Some("30s".to_string()),
+                think_time,
+            },
+            "externally-controlled" => ExecutionConfig::ExternallyControlled {
+                vus: vus.unwrap_or(1),
+                max_vus: vus.unwrap_or(10),
+                duration,
+                graceful_stop: Some("30s".to_string()),
+                think_time,
+            },
+            "" => ExecutionConfig::ConstantVus {
                 vus: vus.unwrap_or(1),
                 duration: duration.unwrap_or_else(|| "30s".to_string()),
                 graceful_stop: Some("30s".to_string()),
                 think_time,
             },
+            other => {
+                eprintln!(
+                    "warning: unknown execution mode '{}' — defaulting to constant-vus",
+                    other
+                );
+                ExecutionConfig::ConstantVus {
+                    vus: vus.unwrap_or(1),
+                    duration: duration.unwrap_or_else(|| "30s".to_string()),
+                    graceful_stop: Some("30s".to_string()),
+                    think_time,
+                }
+            }
         }
     }
 }
