@@ -907,7 +907,7 @@ mod tests {
         // bare "GET\n" (CRLF artifact) parses as GET — the genuinely invalid
         // case is whitespace INSIDE the token ("GE\nT").
         for bad in [
-            "", " ", "  ", "GE T", "GE\nT", "GET,", "{GET}", "POTS(", " GET",
+            "", " ", "  ", "GE T", "GE\nT", "GET,", "{GET}", "POTS(", "\0GET",
         ] {
             assert!(
                 Method::parse(bad).is_none(),
