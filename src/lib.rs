@@ -133,11 +133,22 @@ pub use traits::{Driver, DriverDeclaredOptions, DriverHttpClient, DriverInstance
 
 /// Unstable protocol extension trait (requires `unstable-protocol` feature).
 #[cfg(feature = "unstable-protocol")]
-pub use traits::{Protocol, ProtocolOutcome, ProtocolRegistration};
+pub use traits::{Protocol, ProtocolOutcome};
+
+/// Unstable protocol registration (requires both `unstable-protocol` and
+/// `registration` features — the registration module is only available when
+/// `inventory` is enabled).
+#[cfg(all(feature = "unstable-protocol", feature = "registration"))]
+pub use traits::ProtocolRegistration;
 
 /// Unstable output extension trait (requires `unstable-output` feature).
 #[cfg(feature = "unstable-output")]
-pub use traits::{Output, OutputRegistration};
+pub use traits::Output;
+
+/// Unstable output registration (requires both `unstable-output` and
+/// `registration` features).
+#[cfg(all(feature = "unstable-output", feature = "registration"))]
+pub use traits::OutputRegistration;
 
 // ═══════════════════════════════════════════════════════════════════
 // Error types
