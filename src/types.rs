@@ -648,7 +648,10 @@ pub struct Cookie {
 }
 
 /// Auth configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// P1 line 150: manual Debug impl that redacts secret fields so credentials
+/// never leak into logs, summary output, or debug traces.
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum AuthConfig {
     /// Explicitly NO auth — Postman's `{"type":"noauth"}`. Distinct from
@@ -697,6 +700,67 @@ pub enum AuthConfig {
         auth_key: String,
         algorithm: Option<String>,
     },
+}
+
+impl std::fmt::Debug for AuthConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AuthConfig::NoAuth => write!(f, "NoAuth"),
+            AuthConfig::Bearer { .. } => write!(f, "Bearer {{ token: [redacted] }}"),
+            AuthConfig::Basic { username, .. } => {
+                write!(
+                    f,
+                    "Basic {{ username: {:?}, password: [redacted] }}",
+                    username
+                )
+            }
+            AuthConfig::ApiKey { key, location, .. } => {
+                write!(
+                    f,
+                    "ApiKey {{ key: {:?}, value: [redacted], location: {:?} }}",
+                    key, location
+                )
+            }
+            AuthConfig::Digest { username, .. } => {
+                write!(
+                    f,
+                    "Digest {{ username: {:?}, password: [redacted] }}",
+                    username
+                )
+            }
+            AuthConfig::OAuth1 { consumer_key, .. } => {
+                write!(
+                    f,
+                    "OAuth1 {{ consumer_key: {:?}, consumer_secret: [redacted] }}",
+                    consumer_key
+                )
+            }
+            AuthConfig::OAuth2 { token_type, .. } => {
+                write!(
+                    f,
+                    "OAuth2 {{ token_type: {:?}, access_token: [redacted] }}",
+                    token_type
+                )
+            }
+            AuthConfig::AwsSigV4 {
+                access_key,
+                region,
+                service,
+                ..
+            } => {
+                write!(f, "AwsSigV4 {{ access_key: {:?}, secret_key: [redacted], region: {:?}, service: {:?} }}", access_key, region, service)
+            }
+            AuthConfig::Hawk {
+                auth_id, algorithm, ..
+            } => {
+                write!(
+                    f,
+                    "Hawk {{ auth_id: {:?}, auth_key: [redacted], algorithm: {:?} }}",
+                    auth_id, algorithm
+                )
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
