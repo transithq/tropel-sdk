@@ -27,6 +27,10 @@ pub enum TropelError {
     #[error("HTTP error: {0}")]
     Http(String),
 
+    /// A transport failure raised by the HTTP/2 stack.
+    #[error("HTTP/2 error: {0}")]
+    Http2(String),
+
     #[error("Execution error: {0}")]
     Execution(String),
 
