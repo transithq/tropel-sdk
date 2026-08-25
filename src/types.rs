@@ -578,12 +578,16 @@ impl Response {
 /// - **receiving**: response headers received until full body received
 /// - **total**: full request lifecycle (start until body fully received)
 ///
-/// Phases not yet measurable from reqwest alone:
-/// - **tls_handshaking**: TLS handshake (included in `connecting` for https)
-/// - **sending**: time to transmit the request body
+/// **tls_handshaking** is not measurable from reqwest alone — reqwest's
+/// sealed connector folds the TLS handshake into the same connector call as
+/// the TCP connect, so it is reported within `connecting` for https (and is
+/// genuinely 0 for plain http / reused connections). A hyper-based custom
+/// connector would be required to split it out.
 ///
-/// These two are set to `Duration::ZERO`; a hyper-based custom connector
-/// would be required to split them out.
+/// **sending** is measured for real by the HTTP client's timed body wrapper,
+/// so `http_req_sending` / `res.timings.sending` carry the actual wire-write
+/// duration (0 for requests without a body, which k6 also reports as sub-µs
+/// header-only writes).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Timings {
     /// Time blocked before connection starts (pool wait / queueing).
@@ -595,10 +599,14 @@ pub struct Timings {
     /// TCP connect time (TLS included for https).
     #[serde(default)]
     pub connecting: Duration,
-    /// TLS handshake time. Always ZERO — folded into `connecting` by reqwest.
+    /// TLS handshake time. ZERO for plain http / reused connections; folded
+    /// into `connecting` for fresh https (reqwest's sealed connector cannot
+    /// split the TLS handshake from the TCP connect).
     #[serde(default)]
     pub tls_handshaking: Duration,
-    /// Time to send the request body. Always ZERO — not exposed by reqwest.
+    /// Time to send the request body. Real for requests with a body (measured
+    /// via a timed body wrapper); 0 for bodyless requests (the header-only
+    /// write is sub-µs, matching k6's near-zero sending for GET).
     #[serde(default)]
     pub sending: Duration,
     /// Time to first byte (TTFB) — from request start to response head received.
