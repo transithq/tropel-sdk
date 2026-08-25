@@ -335,58 +335,56 @@ impl<'de> Deserialize<'de> for Body {
             // A JSON string is a Raw body (unchanged wire format).
             serde_json::Value::String(s) => Ok(Body::Raw(s)),
             serde_json::Value::Object(mut obj) => {
-                match obj
-                    .remove("__tropel_body")
-                    .and_then(|v| v.as_str().map(str::to_string))
-                {
-                    Some(tag) => match tag.as_str() {
-                        "form_data" => {
-                            let fields = obj
-                                .remove("fields")
-                                .and_then(|f| serde_json::from_value(f).ok())
-                                .unwrap_or_default();
-                            Ok(Body::FormData(fields))
-                        }
-                        "url_encoded" => {
-                            let fields = obj
-                                .remove("fields")
-                                .map(de_urlencoded_fields)
-                                .unwrap_or_default();
-                            Ok(Body::UrlEncoded(fields))
-                        }
-                        "binary" => {
-                            let data = obj
-                                .remove("data")
-                                .and_then(|d| serde_json::from_value(d).ok())
-                                .unwrap_or_default();
-                            Ok(Body::Binary(data))
-                        }
-                        "graphql" => {
-                            let query = obj
-                                .remove("query")
-                                .and_then(|q| q.as_str().map(str::to_string))
-                                .unwrap_or_default();
-                            let variables = obj
-                                .remove("variables")
-                                .and_then(|v| serde_json::from_value(v).ok());
-                            Ok(Body::GraphQL { query, variables })
-                        }
-                        // Unknown tag → treat the WHOLE object as a Json body
-                        // (restoring the removed key). Hard-erroring here
-                        // would be a regression: before this fix ANY object
-                        // parsed as Json, including a legit user payload that
-                        // happens to carry a `__tropel_body` key.
-                        other => {
-                            obj.insert(
-                                "__tropel_body".to_string(),
-                                serde_json::Value::String(other.to_string()),
-                            );
-                            Ok(Body::Json(serde_json::Value::Object(obj)))
-                        }
-                    },
-                    // No discriminator → Json body (backward compatible with
-                    // the old untagged wire form).
-                    None => Ok(Body::Json(serde_json::Value::Object(obj))),
+                // Backlog line 247: peek at __tropel_body before removing —
+                // if it's NOT a valid discriminator string, the key must be
+                // preserved in the Json body. The old code unconditionally
+                // removed it, silently deleting any user key named
+                // __tropel_body.
+                let tag = obj
+                    .get("__tropel_body")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                match tag.as_deref() {
+                    Some("form_data") => {
+                        obj.remove("__tropel_body");
+                        let fields = obj
+                            .remove("fields")
+                            .and_then(|f| serde_json::from_value(f).ok())
+                            .unwrap_or_default();
+                        Ok(Body::FormData(fields))
+                    }
+                    Some("url_encoded") => {
+                        obj.remove("__tropel_body");
+                        let fields = obj
+                            .remove("fields")
+                            .map(de_urlencoded_fields)
+                            .unwrap_or_default();
+                        Ok(Body::UrlEncoded(fields))
+                    }
+                    Some("binary") => {
+                        obj.remove("__tropel_body");
+                        let data = obj
+                            .remove("data")
+                            .and_then(|d| serde_json::from_value(d).ok())
+                            .unwrap_or_default();
+                        Ok(Body::Binary(data))
+                    }
+                    Some("graphql") => {
+                        obj.remove("__tropel_body");
+                        let query = obj
+                            .remove("query")
+                            .and_then(|q| q.as_str().map(str::to_string))
+                            .unwrap_or_default();
+                        let variables = obj
+                            .remove("variables")
+                            .and_then(|v| serde_json::from_value(v).ok());
+                        Ok(Body::GraphQL { query, variables })
+                    }
+                    // No discriminator or non-string value → Json body.
+                    // The __tropel_body key is preserved (not removed) so
+                    // user payloads that happen to carry this key are not
+                    // silently mutated.
+                    _ => Ok(Body::Json(serde_json::Value::Object(obj))),
                 }
             }
             other => Ok(Body::Json(other)),
@@ -971,7 +969,7 @@ mod tests {
         // bare "GET\n" (CRLF artifact) parses as GET — the genuinely invalid
         // case is whitespace INSIDE the token ("GE\nT").
         for bad in [
-            "", " ", "  ", "GE T", "GE\nT", "GET,", "{GET}", "POTS(", "\x00GET",
+            "", " ", "  ", "GE T", "GE\nT", "GET,", "{GET}", "POTS(", "\0GET",
         ] {
             assert!(
                 Method::parse(bad).is_none(),
