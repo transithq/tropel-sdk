@@ -104,7 +104,7 @@ pub use scenario::{Scenario, ScenarioInfo, ScenarioItem};
 pub use types::tag_keys;
 pub use types::{
     ApiKeyLocation, AuthConfig, Body, CertificateConfig, Cookie, FormDataPart, Method, Request,
-    Response, ResponseType, Sample, SampleType, Timings,
+    RequestCookie, Response, ResponseType, Sample, SampleType, Timings,
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -211,6 +211,7 @@ mod tests {
                     certificate: None,
                     follow_redirects: true,
                     host: None,
+                    cookies: Default::default(),
                     timeout: None,
                     response_type: ResponseType::Text,
                 }),

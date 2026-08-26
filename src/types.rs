@@ -181,11 +181,31 @@ pub struct Request {
     /// `req.Header`). `None` → the URL's host is used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
+    /// Request cookies — k6 `params.cookies` (TR-230). Carried separately
+    /// (not folded into the Cookie header) so the client can implement k6's
+    /// jar merge: a `replace: false` (default) request cookie is sent
+    /// ALONGSIDE the per-VU jar cookie of the same name; `replace: true`
+    /// suppresses the jar's. `req.Host`-style: kept off the header list so
+    /// the wire is built in one place.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cookies: Vec<RequestCookie>,
     /// Connection/read timeout.
     pub timeout: Option<Duration>,
     /// How to handle the response body (k6 `params.responseType`).
     #[serde(default)]
     pub response_type: ResponseType,
+}
+
+/// A single request cookie from k6 `params.cookies` — `{name: value}` or the
+/// `{name: {value, replace}}` form (TR-230).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RequestCookie {
+    pub name: String,
+    pub value: String,
+    /// `replace: true` → this cookie replaces the per-VU jar cookie of the
+    /// same name; `false` (k6's default) → both are sent.
+    #[serde(default)]
+    pub replace: bool,
 }
 
 /// Deserialize request headers from EITHER the legacy JSON object form
@@ -227,6 +247,7 @@ impl Default for Request {
             certificate: None,
             follow_redirects: true,
             host: None,
+            cookies: Vec::new(),
             timeout: None,
             response_type: ResponseType::Text,
         }
