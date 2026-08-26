@@ -174,6 +174,13 @@ pub struct Request {
     /// Whether to follow redirects.
     #[serde(default = "default_true")]
     pub follow_redirects: bool,
+    /// Host override — k6 `req.Host` (TR-230). A `Host` key in the request
+    /// headers sets this instead of sending a plain `Host` header: the wire
+    /// carries `Host: <value>` (reqwest honors a user-set Host header), but
+    /// `res.request.headers` must not list it (k6 keeps Host off
+    /// `req.Header`). `None` → the URL's host is used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     /// Connection/read timeout.
     pub timeout: Option<Duration>,
     /// How to handle the response body (k6 `params.responseType`).
@@ -219,6 +226,7 @@ impl Default for Request {
             auth: None,
             certificate: None,
             follow_redirects: true,
+            host: None,
             timeout: None,
             response_type: ResponseType::Text,
         }
