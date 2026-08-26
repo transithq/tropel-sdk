@@ -210,6 +210,7 @@ mod tests {
                     auth: None,
                     certificate: None,
                     follow_redirects: true,
+                    host: None,
                     timeout: None,
                     response_type: ResponseType::Text,
                 }),
