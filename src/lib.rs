@@ -273,48 +273,7 @@ mod tests {
         use inventory as _;
     }
 
-    /// Verify `wit/adapter.wit` resolves as a valid WIT package.
-    ///
-    /// This is the regression guard for the broken-WIT history: the old
-    /// `world.wit` exported an interface that was never defined, and a
-    /// sibling file was C-ABI prose rather than valid WIT. If the world no
-    /// longer resolves — or the `tropel-adapter` export disappears — this
-    /// test fails.
-    #[test]
-    fn test_wit_contract_resolves() {
-        let mut resolve = wit_parser::Resolve::default();
-        let wit_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("wit");
-        let (pkg, _paths) = resolve
-            .push_dir(&wit_dir)
-            .expect("wit/ directory must parse as a valid WIT package");
-
-        let world = resolve
-            .select_world(&[pkg], Some("tropel-adapter-world"))
-            .expect("world `tropel-adapter-world` must exist");
-
-        // The world must export the `tropel-adapter` interface the engine
-        // drives (id / detect / parse).
-        let world = resolve.worlds.get(world).expect("world must be in arena");
-        let adapter = world
-            .exports
-            .values()
-            .find_map(|item| match item {
-                wit_parser::WorldItem::Interface { id, .. } => resolve.interfaces.get(*id),
-                _ => None,
-            })
-            .expect("world must export an interface (tropel-adapter)");
-        assert_eq!(
-            adapter.name.as_deref(),
-            Some("tropel-adapter"),
-            "exported interface must be named tropel-adapter"
-        );
-
-        // Sanity: the adapter interface exposes id/detect/parse.
-        for fname in ["id", "detect", "parse"] {
-            assert!(
-                adapter.functions.contains_key(fname),
-                "tropel-adapter must export function `{fname}`"
-            );
-        }
-    }
+    // TR-607: wit/adapter.wit is deleted (was dead, no build.rs/wit-bindgen).
+    // The old test asserted the wit directory parsed — now it would fail on an
+    // empty directory, so it is removed with the wit file.
 }
