@@ -272,15 +272,21 @@ impl ExecutionConfig {
         match mode {
             "ramping-vus" => {
                 let start_vus = vus.unwrap_or(1);
-                let stages_list = stages
-                    .as_deref()
-                    .and_then(|s| serde_json::from_str::<Vec<Stage>>(s).ok())
-                    .unwrap_or_else(|| {
-                        vec![Stage {
-                            duration: duration.clone().unwrap_or_else(|| "30s".to_string()),
-                            target: vus.unwrap_or(10),
-                        }]
-                    });
+                let stages_list = match stages.as_deref() {
+                    Some(s) => match serde_json::from_str::<Vec<Stage>>(s) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            eprintln!(
+                                "warning: invalid stages JSON '{s}': {e} — using empty stages"
+                            );
+                            Vec::new()
+                        }
+                    },
+                    None => vec![Stage {
+                        duration: duration.clone().unwrap_or_else(|| "30s".to_string()),
+                        target: vus.unwrap_or(10),
+                    }],
+                };
                 ExecutionConfig::RampingVus {
                     stages: stages_list,
                     start_vus,
