@@ -387,10 +387,7 @@ impl<'de> Deserialize<'de> for Body {
                 match tag.as_deref() {
                     Some("form_data") => {
                         obj.remove("__tropel_body");
-                        let fields = obj
-                            .remove("fields")
-                            .map(de_form_fields)
-                            .unwrap_or_default();
+                        let fields = obj.remove("fields").map(de_form_fields).unwrap_or_default();
                         Ok(Body::FormData(fields))
                     }
                     Some("url_encoded") => {
