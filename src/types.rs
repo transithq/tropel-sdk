@@ -771,6 +771,10 @@ pub enum AuthConfig {
         consumer_secret: String,
         token: Option<String>,
         token_secret: Option<String>,
+        /// Signature method: HMAC-SHA1, HMAC-SHA256, PLAINTEXT, RSA-SHA1 etc.
+        /// `None` defaults to HMAC-SHA1 for backwards compat (pre-TR-409).
+        #[serde(default)]
+        signature_method: Option<String>,
     },
     #[serde(rename = "oauth2")]
     OAuth2 {
@@ -790,6 +794,50 @@ pub enum AuthConfig {
         auth_id: String,
         auth_key: String,
         algorithm: Option<String>,
+    },
+    /// NTLM (TR-409: reported as unsupported until implemented — never silently
+    /// degraded to `NoAuth`).
+    #[serde(rename = "ntlm")]
+    Ntlm {
+        #[serde(default)]
+        username: Option<String>,
+        #[serde(default)]
+        password: Option<String>,
+        #[serde(flatten)]
+        extra: std::collections::HashMap<String, serde_json::Value>,
+    },
+    /// WSSE UsernameToken (TR-409: distinct from `noauth`; requires WSSE signing
+    /// which lives in `tropel-auth::oauth::sign_wsse` — until wired through the
+    /// signer builder it is reported as unsupported).
+    #[serde(rename = "wsse")]
+    Wsse {
+        #[serde(default)]
+        username: Option<String>,
+        #[serde(default)]
+        password: Option<String>,
+        #[serde(flatten)]
+        extra: std::collections::HashMap<String, serde_json::Value>,
+    },
+    /// JWT bearer (TR-409: `Authorization: Bearer <jwt>` where the token is a
+    /// signed JWT — until the picker's JWT flow is wired to `sign_jwt` it is
+    /// reported as unsupported rather than degraded to bearer/none).
+    #[serde(rename = "jwt")]
+    Jwt {
+        #[serde(default)]
+        token: Option<String>,
+        #[serde(flatten)]
+        extra: std::collections::HashMap<String, serde_json::Value>,
+    },
+    /// Akamai EdgeGrid (TR-409: `Authorization: EG1-HMAC-SHA256 ...` — not yet
+    /// implemented; reported as unsupported).
+    #[serde(rename = "akamai-edgegrid")]
+    AkamaiEdgeGrid {
+        #[serde(default)]
+        access_token: Option<String>,
+        #[serde(default)]
+        client_token: Option<String>,
+        #[serde(flatten)]
+        extra: std::collections::HashMap<String, serde_json::Value>,
     },
 }
 
@@ -848,6 +896,24 @@ impl std::fmt::Debug for AuthConfig {
                     f,
                     "Hawk {{ auth_id: {:?}, auth_key: [redacted], algorithm: {:?} }}",
                     auth_id, algorithm
+                )
+            }
+            AuthConfig::Ntlm { username, .. } => {
+                write!(f, "Ntlm {{ username: {:?}, password: [redacted] }}", username)
+            }
+            AuthConfig::Wsse { username, .. } => {
+                write!(f, "Wsse {{ username: {:?}, password: [redacted] }}", username)
+            }
+            AuthConfig::Jwt { .. } => write!(f, "Jwt {{ token: [redacted] }}"),
+            AuthConfig::AkamaiEdgeGrid {
+                access_token,
+                client_token,
+                ..
+            } => {
+                write!(
+                    f,
+                    "AkamaiEdgeGrid {{ access_token: {:?}, client_token: {:?}, client_secret: [redacted] }}",
+                    access_token, client_token
                 )
             }
         }
