@@ -107,6 +107,7 @@ impl InputAdapter for SampleAdapter {
             items: vec![],
             variables: Default::default(),
             auth: None,
+            conversion_notes: Vec::new(),
         })
     }
 }

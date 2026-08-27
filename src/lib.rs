@@ -222,6 +222,7 @@ mod tests {
             }],
             variables: Default::default(),
             auth: None,
+            conversion_notes: Vec::new(),
         };
         assert_eq!(scenario.items.len(), 1);
         assert_eq!(scenario.info.name, "test");
