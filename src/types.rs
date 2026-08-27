@@ -324,7 +324,18 @@ impl Serialize for Body {
         use serde::ser::SerializeMap;
         match self {
             Body::Raw(s) => serializer.serialize_str(s),
-            Body::Json(v) => v.serialize(serializer),
+            Body::Json(v) => {
+                // Preserve Json(String) round-trip: a plain string collides with Raw.
+                // String payloads are wrapped with a discriminator so Raw vs Json(String)
+                // survive a distributed round-trip with different wire bytes preserved.
+                if let serde_json::Value::String(s) = v {
+                    let mut map = serializer.serialize_map(Some(2))?;
+                    map.serialize_entry("__tropel_body", "json")?;
+                    map.serialize_entry("value", s)?;
+                    return map.end();
+                }
+                v.serialize(serializer)
+            }
             Body::FormData(fields) => {
                 let mut map = serializer.serialize_map(Some(2))?;
                 map.serialize_entry("__tropel_body", "form_data")?;
@@ -376,10 +387,7 @@ impl<'de> Deserialize<'de> for Body {
                 match tag.as_deref() {
                     Some("form_data") => {
                         obj.remove("__tropel_body");
-                        let fields = obj
-                            .remove("fields")
-                            .and_then(|f| serde_json::from_value(f).ok())
-                            .unwrap_or_default();
+                        let fields = obj.remove("fields").map(de_form_fields).unwrap_or_default();
                         Ok(Body::FormData(fields))
                     }
                     Some("url_encoded") => {
@@ -409,6 +417,14 @@ impl<'de> Deserialize<'de> for Body {
                             .and_then(|v| serde_json::from_value(v).ok());
                         Ok(Body::GraphQL { query, variables })
                     }
+                    Some("json") => {
+                        obj.remove("__tropel_body");
+                        let s = obj
+                            .remove("value")
+                            .and_then(|v| v.as_str().map(str::to_string))
+                            .unwrap_or_default();
+                        Ok(Body::Json(serde_json::Value::String(s)))
+                    }
                     // No discriminator or non-string value → Json body.
                     // The __tropel_body key is preserved (not removed) so
                     // user payloads that happen to carry this key are not
@@ -418,6 +434,46 @@ impl<'de> Deserialize<'de> for Body {
             }
             other => Ok(Body::Json(other)),
         }
+    }
+}
+
+fn de_form_fields(value: serde_json::Value) -> Vec<FormDataPart> {
+    match value {
+        serde_json::Value::Array(arr) => arr
+            .into_iter()
+            .filter_map(|v| {
+                // Lenient: numeric `value` fields are stringified rather than dropping the whole form.
+                // Try strict first, then fallback to manual conversion.
+                if let Ok(part) = serde_json::from_value::<FormDataPart>(v.clone()) {
+                    return Some(part);
+                }
+                // Fallback: object with name/value where value may be non-string.
+                let obj = v.as_object()?;
+                let name = obj.get("name")?.as_str()?.to_string();
+                let value = obj.get("value").map(|x| match x {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Number(n) => n.to_string(),
+                    serde_json::Value::Bool(b) => b.to_string(),
+                    _ => x.to_string(),
+                });
+                let filename = obj
+                    .get("filename")
+                    .and_then(|x| x.as_str())
+                    .map(str::to_string);
+                let mime = obj.get("mime").and_then(|x| x.as_str()).map(str::to_string);
+                let data = obj
+                    .get("data")
+                    .and_then(|x| serde_json::from_value(x.clone()).ok());
+                Some(FormDataPart {
+                    name,
+                    value,
+                    filename,
+                    mime,
+                    data,
+                })
+            })
+            .collect(),
+        _ => Vec::new(),
     }
 }
 
