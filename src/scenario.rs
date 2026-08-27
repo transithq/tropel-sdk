@@ -15,6 +15,13 @@ pub struct Scenario {
     pub variables: HashMap<String, serde_json::Value>,
     /// Auth configuration applied to all requests.
     pub auth: Option<AuthConfig>,
+    /// TR-410: conversion notes — warnings about items that were skipped,
+    /// degraded, or lost during import. Structured as a list of human-
+    /// readable strings so the client can render them in the import UI.
+    /// Each note names the item and the reason (e.g. "Skipped item 'WebSocket
+    /// chat': unsupported protocol").
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conversion_notes: Vec<String>,
 }
 
 /// Scenario metadata.
