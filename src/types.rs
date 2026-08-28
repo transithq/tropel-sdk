@@ -502,6 +502,47 @@ fn de_urlencoded_fields(value: serde_json::Value) -> Vec<(String, String)> {
 }
 
 impl Body {
+    /// The exact bytes this body serializes to on the wire.
+    ///
+    /// Lives here, next to `Body`, because more than one crate needs the count
+    /// and only one of them can depend on the HTTP client. It used to live in
+    /// `tropel-http`, which put it out of reach of `tropel-runtime` —
+    /// `tropel-http` is a dev-dependency there, deliberately kept out of the
+    /// library graph so the browser slice can compile. The declarative runner
+    /// therefore could not measure a request body, and silently omitted
+    /// `data_sent` on its transport-failure path while the k6 driver emitted
+    /// it, so the two drivers reported different totals for the same run
+    /// (TR-121).
+    ///
+    /// `tropel-http` delegates here, so the serializer that measures the body
+    /// and the serializer that sends it cannot diverge — `data_sent` accounts
+    /// for the bytes that actually go out.
+    pub fn to_wire_bytes(&self) -> Vec<u8> {
+        match self {
+            Body::Raw(s) => s.as_bytes().to_vec(),
+            Body::Json(val) => serde_json::to_string(val).unwrap_or_default().into_bytes(),
+            Body::FormData(parts) => multipart_form_data_bytes(parts),
+            Body::UrlEncoded(fields) => {
+                // W2 #203: fields are an ordered Vec (declaration order,
+                // duplicates preserved) — byte-stable by construction, so no
+                // sort is needed (the old HashMap required the key sort for
+                // run-to-run determinism, backlog line 143).
+                serde_urlencoded::to_string(fields)
+                    .unwrap_or_default()
+                    .into_bytes()
+            }
+            Body::Binary(data) => data.clone(),
+            Body::GraphQL { query, variables } => {
+                Body::graphql_json_string(query, variables).into_bytes()
+            }
+        }
+    }
+
+    /// Exact wire size of this body in bytes. See [`Body::to_wire_bytes`].
+    pub fn wire_size(&self) -> usize {
+        self.to_wire_bytes().len()
+    }
+
     /// Serialize a GraphQL body to its wire JSON.
     ///
     /// Returns `{"query": "..."}` plus a `"variables"` key ONLY when the
@@ -1414,5 +1455,148 @@ mod reserved_builtin_metric_tests {
             RESERVED_BUILTIN_METRICS.len(),
             "RESERVED_BUILTIN_METRICS must not contain duplicates"
         );
+    }
+}
+
+/// The multipart boundary tropel emits.
+///
+/// Part of the wire contract, so it lives beside the serializer that uses it.
+pub const MULTIPART_BOUNDARY: &str = "------------------------tropel-boundary-7a2f24b9";
+
+fn multipart_form_data_bytes(parts: &[FormDataPart]) -> Vec<u8> {
+    let mut body = Vec::new();
+
+    // Backlog line 143: sort by name so the multipart framing is byte-stable
+    // run-to-run (a HashMap iterates in nondeterministic RandomState order).
+    // Line 198: file parts carry (filename, mime, raw bytes) — a part with
+    // data is emitted with `filename=` and a per-part Content-Type, which
+    // every mainstream parser keys the file branch off of.
+    let mut fields: Vec<&FormDataPart> = parts.iter().collect();
+    fields.sort_by(|a, b| a.name.cmp(&b.name));
+
+    for part in fields {
+        body.extend_from_slice(format!("--{}\r\n", MULTIPART_BOUNDARY).as_bytes());
+        if let Some(data) = &part.data {
+            body.extend_from_slice(
+                format!(
+                    "Content-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\n",
+                    escape_multipart_field_name(&part.name),
+                    escape_multipart_field_name(part.filename.as_deref().unwrap_or("file"))
+                )
+                .as_bytes(),
+            );
+            body.extend_from_slice(
+                format!(
+                    "Content-Type: {}\r\n\r\n",
+                    part.mime.as_deref().unwrap_or("application/octet-stream")
+                )
+                .as_bytes(),
+            );
+            body.extend_from_slice(data);
+        } else {
+            body.extend_from_slice(
+                format!(
+                    "Content-Disposition: form-data; name=\"{}\"\r\n\r\n",
+                    escape_multipart_field_name(&part.name)
+                )
+                .as_bytes(),
+            );
+            if let Some(value) = &part.value {
+                body.extend_from_slice(value.as_bytes());
+            }
+        }
+        body.extend_from_slice(b"\r\n");
+    }
+
+    body.extend_from_slice(format!("--{}--\r\n", MULTIPART_BOUNDARY).as_bytes());
+    body
+}
+
+/// Escape a multipart field name / filename.
+///
+/// k6 does NOT escape these — a real k6 bug. Tropel does, and keeps the
+/// divergence deliberately (TR-232).
+fn escape_multipart_field_name(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[cfg(test)]
+mod body_wire_size_tests {
+    use super::*;
+
+    #[test]
+    fn wire_size_matches_the_serialized_bytes_for_every_variant() {
+        let cases: Vec<Body> = vec![
+            Body::Raw("hello".into()),
+            Body::Json(serde_json::json!({"a": 1, "b": "two"})),
+            Body::Binary(vec![0u8, 1, 2, 3, 255]),
+            Body::UrlEncoded(vec![
+                ("a".into(), "1".into()),
+                ("a".into(), "2".into()),
+                ("sp ace".into(), "v&x".into()),
+            ]),
+            Body::GraphQL {
+                query: "query { me { id } }".into(),
+                variables: Some(HashMap::from([("id".to_string(), serde_json::json!(7))])),
+            },
+        ];
+        for body in &cases {
+            assert_eq!(
+                body.wire_size(),
+                body.to_wire_bytes().len(),
+                "wire_size must be the length of the bytes actually produced"
+            );
+        }
+    }
+
+    /// `data_sent` must count the framing, not just the payload — a multipart
+    /// body is mostly framing for small parts, and undercounting it makes a
+    /// run's egress accounting wrong in the direction that looks fine.
+    #[test]
+    fn multipart_wire_size_includes_framing_and_is_deterministic() {
+        let body = Body::FormData(vec![
+            FormDataPart {
+                name: "zeta".into(),
+                value: Some("v".into()),
+                filename: None,
+                mime: None,
+                data: None,
+            },
+            FormDataPart {
+                name: "alpha".into(),
+                value: None,
+                filename: Some("a.bin".into()),
+                mime: Some("application/octet-stream".into()),
+                data: Some(vec![1, 2, 3]),
+            },
+        ]);
+        let bytes = body.to_wire_bytes();
+        assert!(
+            bytes.len() > 4,
+            "multipart size must include boundaries and headers, not just the \
+             4 payload bytes — got {}",
+            bytes.len()
+        );
+        assert_eq!(body.wire_size(), bytes.len());
+
+        // Parts are sorted by name, so framing is byte-stable run to run.
+        let rendered = String::from_utf8_lossy(&bytes);
+        let alpha_at = rendered.find("alpha").expect("alpha part present");
+        let zeta_at = rendered.find("zeta").expect("zeta part present");
+        assert!(
+            alpha_at < zeta_at,
+            "multipart parts must be emitted in sorted order for determinism"
+        );
+        assert_eq!(
+            body.to_wire_bytes(),
+            bytes,
+            "serialization is deterministic"
+        );
+    }
+
+    #[test]
+    fn empty_bodies_are_zero_length() {
+        assert_eq!(Body::Raw(String::new()).wire_size(), 0);
+        assert_eq!(Body::Binary(Vec::new()).wire_size(), 0);
     }
 }
