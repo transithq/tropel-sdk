@@ -899,10 +899,18 @@ impl std::fmt::Debug for AuthConfig {
                 )
             }
             AuthConfig::Ntlm { username, .. } => {
-                write!(f, "Ntlm {{ username: {:?}, password: [redacted] }}", username)
+                write!(
+                    f,
+                    "Ntlm {{ username: {:?}, password: [redacted] }}",
+                    username
+                )
             }
             AuthConfig::Wsse { username, .. } => {
-                write!(f, "Wsse {{ username: {:?}, password: [redacted] }}", username)
+                write!(
+                    f,
+                    "Wsse {{ username: {:?}, password: [redacted] }}",
+                    username
+                )
             }
             AuthConfig::Jwt { .. } => write!(f, "Jwt {{ token: [redacted] }}"),
             AuthConfig::AkamaiEdgeGrid {
