@@ -1099,6 +1099,70 @@ pub struct Sample {
     pub sample_type: SampleType,
 }
 
+/// Metric names the engine owns. User script code must not emit into these.
+///
+/// A script that does `new Rate('http_req_failed').add(0)` — or writes into
+/// `checks` — makes a CI gate read whatever it likes, which is invariant #1
+/// ("a green run is never wrong") in one line of user JS. Every host bridge
+/// that lets script code create a metric must reject these names.
+///
+/// # Why this lives in the SDK
+///
+/// It was previously duplicated across four call sites — the k6 driver, two
+/// arms of the `pm`/`trp` sandbox bridge, and the wasm driver — and the four
+/// copies had **drifted apart**. `http_req_dns` was guarded on one path only;
+/// `iteration_duration` and `dropped_iterations` on a different one; the
+/// `ws_*` and `browser_*` families on a third. The union of the holes meant a
+/// k6 script could forge `dropped_iterations` (the counter TR-001 exists to
+/// make trustworthy) while a Postman script could forge `http_req_dns`.
+///
+/// The metric names ARE the metric contract, and the contract belongs at the
+/// bottom of the graph (D3). Every guard must call
+/// [`is_reserved_builtin_metric`] rather than carry a fifth copy.
+///
+/// Sorted, so a reader can diff it against k6's own list by eye.
+pub const RESERVED_BUILTIN_METRICS: &[&str] = &[
+    "browser_http_req_duration",
+    "browser_http_req_failed",
+    "checks",
+    "data_received",
+    "data_sent",
+    "dropped_iterations",
+    "group_duration",
+    "http_req_blocked",
+    "http_req_connecting",
+    "http_req_dns",
+    "http_req_duration",
+    "http_req_failed",
+    "http_req_receiving",
+    "http_req_sending",
+    "http_req_tls_handshaking",
+    "http_req_waiting",
+    "http_reqs",
+    "iteration_duration",
+    "iterations",
+    "vus",
+    "vus_max",
+    "ws_connecting",
+    "ws_msgs_received",
+    "ws_msgs_sent",
+    "ws_ping",
+    "ws_receiving",
+    "ws_send_duration",
+    "ws_sending",
+    "ws_session_duration",
+];
+
+/// Whether `name` is a builtin metric the engine owns (see
+/// [`RESERVED_BUILTIN_METRICS`]).
+///
+/// Compares the bare metric name. Callers hold the tag-scoped form
+/// (`http_req_duration{status:200}`) separately, so no stripping happens here.
+#[inline]
+pub fn is_reserved_builtin_metric(name: &str) -> bool {
+    RESERVED_BUILTIN_METRICS.contains(&name)
+}
+
 /// Type of metric sample.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum SampleType {
@@ -1288,5 +1352,67 @@ mod tests {
         assert!(matches!(json, Body::Json(_)));
         let arr: Body = serde_json::from_str("[1,2,3]").unwrap();
         assert!(matches!(arr, Body::Json(_)));
+    }
+}
+
+#[cfg(test)]
+mod reserved_builtin_metric_tests {
+    use super::*;
+
+    /// The union of what the four pre-consolidation guards covered. Each name
+    /// here was reachable by user script on at least one path because that
+    /// path's private copy of the list omitted it.
+    ///
+    /// Fails on the pre-fix code by construction: there was no shared list to
+    /// call, and no single copy contained all of these.
+    #[test]
+    fn covers_every_name_the_divergent_guards_between_them_missed() {
+        // Guarded only by the k6 driver's copy.
+        assert!(is_reserved_builtin_metric("http_req_dns"));
+        assert!(is_reserved_builtin_metric("browser_http_req_duration"));
+        assert!(is_reserved_builtin_metric("ws_session_duration"));
+        // Guarded only by the pm/trp sandbox copy. `dropped_iterations` is the
+        // sharp one: it is the counter that makes a run's drop reporting
+        // trustworthy, and a k6 script could write to it.
+        assert!(is_reserved_builtin_metric("dropped_iterations"));
+        assert!(is_reserved_builtin_metric("iteration_duration"));
+        // Guarded everywhere already — regression cover.
+        assert!(is_reserved_builtin_metric("checks"));
+        assert!(is_reserved_builtin_metric("http_req_failed"));
+    }
+
+    #[test]
+    fn user_metric_names_are_not_reserved() {
+        for name in [
+            "my_counter",
+            "http_req_duration_custom",
+            "checks_total",
+            "",
+            "HTTP_REQS",
+        ] {
+            assert!(
+                !is_reserved_builtin_metric(name),
+                "{name} must remain available to user scripts"
+            );
+        }
+    }
+
+    /// Sorted and duplicate-free, so the next person to add a metric appends in
+    /// the right place and a doubled entry cannot hide a missing one.
+    #[test]
+    fn list_is_sorted_and_unique() {
+        let mut sorted = RESERVED_BUILTIN_METRICS.to_vec();
+        sorted.sort_unstable();
+        assert_eq!(
+            sorted.as_slice(),
+            RESERVED_BUILTIN_METRICS,
+            "RESERVED_BUILTIN_METRICS must stay sorted"
+        );
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            RESERVED_BUILTIN_METRICS.len(),
+            "RESERVED_BUILTIN_METRICS must not contain duplicates"
+        );
     }
 }

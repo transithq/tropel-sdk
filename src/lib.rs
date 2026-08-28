@@ -106,6 +106,9 @@ pub use types::{
     ApiKeyLocation, AuthConfig, Body, CertificateConfig, Cookie, FormDataPart, Method, Request,
     RequestCookie, Response, ResponseType, Sample, SampleType, Timings,
 };
+// The metric-name contract. Every host bridge that lets user script create a
+// metric must reject these; see the type docs for why it is not four lists.
+pub use types::{is_reserved_builtin_metric, RESERVED_BUILTIN_METRICS};
 
 // ═══════════════════════════════════════════════════════════════════
 // Extension traits
