@@ -1177,6 +1177,7 @@ pub const RESERVED_BUILTIN_METRICS: &[&str] = &[
     "http_req_failed",
     "http_req_receiving",
     "http_req_sending",
+    "http_req_time_to_failure",
     "http_req_tls_handshaking",
     "http_req_waiting",
     "http_reqs",
@@ -1420,6 +1421,10 @@ mod reserved_builtin_metric_tests {
         // Guarded everywhere already — regression cover.
         assert!(is_reserved_builtin_metric("checks"));
         assert!(is_reserved_builtin_metric("http_req_failed"));
+        // TR-203: engine-owned superset metric (k6 has no equivalent). A new
+        // builtin that is not reserved is a fresh instance of the bug this
+        // list closed, so it is added with the metric rather than after it.
+        assert!(is_reserved_builtin_metric("http_req_time_to_failure"));
     }
 
     #[test]
