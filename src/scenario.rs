@@ -60,4 +60,74 @@ pub struct ScenarioItem {
     /// Child items (for folders).
     #[serde(default)]
     pub items: Vec<ScenarioItem>,
+    /// What the user WROTE, where that differs from what gets sent.
+    ///
+    /// See [`RequestAuthoring`]. `None` for every producer that has no such
+    /// detail, and skipped on the wire, so a Scenario is byte-identical to
+    /// before unless an importer fills it in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authoring: Option<RequestAuthoring>,
+}
+
+/// Authoring detail an import preserves that the RUNTIME deliberately drops.
+///
+/// [`Request`] is what to send. A disabled header is simply absent from it, a
+/// disabled body field never reaches the wire, and a query string is free to
+/// stay in the URL because the client re-appends `query_params` anyway. All of
+/// that is correct for executing a scenario and lossy for editing one: an API
+/// client also has to show the user the header they turned OFF, and turn it
+/// back on later.
+///
+/// Carried beside the request rather than inside it because the two answer
+/// different questions, and because widening `Request` would push an
+/// authoring-only concern through every runtime call site that builds one.
+/// Every field is optional and skipped when empty, so nothing that ignores
+/// this sees any change.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RequestAuthoring {
+    /// Every header as written, disabled ones included, in declaration order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub headers: Vec<AuthoredEntry>,
+    /// Every query parameter as written — those inline in the URL AND those
+    /// declared separately — disabled ones included, in declaration order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub query: Vec<AuthoredEntry>,
+    /// Request-scoped variables (Bruno `vars:pre-request`, `params:path`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vars: Vec<AuthoredEntry>,
+    /// Per-request settings the runtime does not model on [`Request`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings: Option<AuthoredSettings>,
+}
+
+/// One authored key/value, with the on/off state the user chose.
+///
+/// A list of these rather than a map: a map cannot hold two parameters of the
+/// same name, cannot keep declaration order, and has nowhere to put `enabled`.
+/// `query_params` on [`Request`] is a map for the runtime, which needs none of
+/// those three.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuthoredEntry {
+    pub key: String,
+    pub value: String,
+    /// `false` for an entry the user disabled (Bruno's `~name:` prefix).
+    #[serde(default = "crate::scenario::default_true")]
+    pub enabled: bool,
+}
+
+/// Per-request settings that are authoring state, not send state.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct AuthoredSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encode_url: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follow_redirects: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_redirects: Option<u32>,
+}
+
+pub(crate) fn default_true() -> bool {
+    true
 }
