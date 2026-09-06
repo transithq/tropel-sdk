@@ -100,7 +100,9 @@ pub mod registration;
 // Core types — the shared Scenario IR used by all adapters
 // ═══════════════════════════════════════════════════════════════════
 
-pub use scenario::{Scenario, ScenarioInfo, ScenarioItem};
+pub use scenario::{
+    AuthoredEntry, AuthoredSettings, RequestAuthoring, Scenario, ScenarioInfo, ScenarioItem,
+};
 pub use types::tag_keys;
 pub use types::{
     ApiKeyLocation, AuthConfig, Body, CertificateConfig, Cookie, FormDataPart, Method, Request,
@@ -202,6 +204,7 @@ mod tests {
                 schema: None,
             },
             items: vec![ScenarioItem {
+                authoring: None,
                 id: None,
                 name: "GET /api".into(),
                 request: Some(Request {
