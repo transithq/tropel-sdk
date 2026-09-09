@@ -319,13 +319,19 @@ mod contract_tests {
         let mut responses = BTreeMap::new();
         responses.insert(
             "200".to_string(),
-            DeclaredResponse { description: Some("ok".into()), ..Default::default() },
+            DeclaredResponse {
+                description: Some("ok".into()),
+                ..Default::default()
+            },
         );
         responses.insert("4XX".to_string(), DeclaredResponse::default());
         responses.insert("default".to_string(), DeclaredResponse::default());
 
         let item = ScenarioItem {
-            contract: Some(RequestContract { responses, ..Default::default() }),
+            contract: Some(RequestContract {
+                responses,
+                ..Default::default()
+            }),
             ..bare_item()
         };
         let json = serde_json::to_string(&item).expect("serializes");
@@ -348,7 +354,10 @@ mod contract_tests {
             r#type: None,
         };
         let json = serde_json::to_string(&p).expect("serializes");
-        assert!(!json.contains("type"), "an absent type is omitted, got {json}");
+        assert!(
+            !json.contains("type"),
+            "an absent type is omitted, got {json}"
+        );
         let back: DeclaredParameter = serde_json::from_str(&json).expect("round-trips");
         assert_eq!(back.r#type, None);
         assert!(back.required);
@@ -380,8 +389,16 @@ mod contract_tests {
             required: true,
             content_types: vec!["application/json".into()],
             fields: vec![
-                DeclaredField { name: "name".into(), required: true, r#type: Some("string".into()) },
-                DeclaredField { name: "age".into(), required: false, r#type: Some("integer".into()) },
+                DeclaredField {
+                    name: "name".into(),
+                    required: true,
+                    r#type: Some("string".into()),
+                },
+                DeclaredField {
+                    name: "age".into(),
+                    required: false,
+                    r#type: Some("integer".into()),
+                },
             ],
         };
         let back: DeclaredBody =
