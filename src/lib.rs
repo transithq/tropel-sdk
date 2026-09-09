@@ -101,7 +101,8 @@ pub mod registration;
 // ═══════════════════════════════════════════════════════════════════
 
 pub use scenario::{
-    AuthoredEntry, AuthoredSettings, RequestAuthoring, Scenario, ScenarioInfo, ScenarioItem,
+    AuthoredEntry, AuthoredSettings, DeclaredBody, DeclaredField, DeclaredParameter,
+    DeclaredResponse, RequestAuthoring, RequestContract, Scenario, ScenarioInfo, ScenarioItem,
 };
 pub use types::tag_keys;
 pub use types::{
@@ -205,6 +206,7 @@ mod tests {
             },
             items: vec![ScenarioItem {
                 authoring: None,
+                contract: None,
                 id: None,
                 name: "GET /api".into(),
                 request: Some(Request {
