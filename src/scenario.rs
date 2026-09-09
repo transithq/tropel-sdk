@@ -123,6 +123,26 @@ pub struct RequestContract {
     /// key would silently drop the two cases a drift check most wants to see.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub responses: BTreeMap<String, DeclaredResponse>,
+    /// The path as the SPEC WRITES IT — `/users/{id}`, placeholders intact.
+    ///
+    /// `Request::url` cannot answer this. Building an executable example
+    /// substitutes every path parameter (`/users/{id}` becomes
+    /// `/users/example`), and that is right for a load run: you cannot GET a
+    /// template. But the substituted value is indistinguishable from a real
+    /// segment afterwards, so a consumer matching a collection's
+    /// `/users/{id}` against a spec sees two different endpoints and reports
+    /// every parameterized path as both "missing from the collection" and
+    /// "not in the spec" — the one shape of false positive that makes a
+    /// drift check useless, since parameterized paths are most of any REST
+    /// API.
+    ///
+    /// Not recoverable from `name` either: that is `operation_id` or
+    /// `summary` when the spec supplies one, and only falls back to
+    /// `"GET /path"`.
+    ///
+    /// `None` for a source with no notion of a path template.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_template: Option<String>,
 }
 
 /// One declared parameter.
@@ -299,13 +319,19 @@ mod contract_tests {
         let mut responses = BTreeMap::new();
         responses.insert(
             "200".to_string(),
-            DeclaredResponse { description: Some("ok".into()), ..Default::default() },
+            DeclaredResponse {
+                description: Some("ok".into()),
+                ..Default::default()
+            },
         );
         responses.insert("4XX".to_string(), DeclaredResponse::default());
         responses.insert("default".to_string(), DeclaredResponse::default());
 
         let item = ScenarioItem {
-            contract: Some(RequestContract { responses, ..Default::default() }),
+            contract: Some(RequestContract {
+                responses,
+                ..Default::default()
+            }),
             ..bare_item()
         };
         let json = serde_json::to_string(&item).expect("serializes");
@@ -328,7 +354,10 @@ mod contract_tests {
             r#type: None,
         };
         let json = serde_json::to_string(&p).expect("serializes");
-        assert!(!json.contains("type"), "an absent type is omitted, got {json}");
+        assert!(
+            !json.contains("type"),
+            "an absent type is omitted, got {json}"
+        );
         let back: DeclaredParameter = serde_json::from_str(&json).expect("round-trips");
         assert_eq!(back.r#type, None);
         assert!(back.required);
@@ -360,8 +389,16 @@ mod contract_tests {
             required: true,
             content_types: vec!["application/json".into()],
             fields: vec![
-                DeclaredField { name: "name".into(), required: true, r#type: Some("string".into()) },
-                DeclaredField { name: "age".into(), required: false, r#type: Some("integer".into()) },
+                DeclaredField {
+                    name: "name".into(),
+                    required: true,
+                    r#type: Some("string".into()),
+                },
+                DeclaredField {
+                    name: "age".into(),
+                    required: false,
+                    r#type: Some("integer".into()),
+                },
             ],
         };
         let back: DeclaredBody =
@@ -371,5 +408,33 @@ mod contract_tests {
         // beside a synthesized example whose value would be the string
         // "integer".
         assert_eq!(back.fields[1].r#type.as_deref(), Some("integer"));
+    }
+
+    #[test]
+    fn a_path_template_survives_where_the_sent_url_cannot_carry_it() {
+        // The pair this field exists to keep apart. A Request holds the
+        // SUBSTITUTED url because that is what gets sent; the template is the
+        // only thing that identifies the endpoint, and one is not derivable
+        // from the other — `/users/example` could just as well be a literal
+        // path segment named "example".
+        let contract = RequestContract {
+            path_template: Some("/users/{id}".into()),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&contract).expect("serializes");
+        assert_eq!(json, r#"{"path_template":"/users/{id}"}"#);
+        let back: RequestContract = serde_json::from_str(&json).expect("reads");
+        assert_eq!(back.path_template.as_deref(), Some("/users/{id}"));
+    }
+
+    #[test]
+    fn a_contract_with_no_path_template_still_serializes_to_nothing() {
+        // The `an_empty_contract_serializes_to_an_empty_object` guarantee has
+        // to survive each field added to this struct, or a source with no
+        // notion of paths starts emitting `"path_template":null`.
+        assert_eq!(
+            serde_json::to_string(&RequestContract::default()).expect("ser"),
+            "{}"
+        );
     }
 }
