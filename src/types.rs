@@ -847,9 +847,9 @@ pub enum AuthConfig {
         #[serde(flatten)]
         extra: std::collections::HashMap<String, serde_json::Value>,
     },
-    /// WSSE UsernameToken (TR-409: distinct from `noauth`; requires WSSE signing
-    /// which lives in `tropel-auth::oauth::sign_wsse` — until wired through the
-    /// signer builder it is reported as unsupported).
+    /// WSSE UsernameToken. Signed by `tropel-auth::oauth::sign_wsse`, reached
+    /// through the signer builder — it was "reported as unsupported" until
+    /// TR-409's WSSE arm landed, and this note is what that changed.
     #[serde(rename = "wsse")]
     Wsse {
         #[serde(default)]
@@ -869,14 +869,38 @@ pub enum AuthConfig {
         #[serde(flatten)]
         extra: std::collections::HashMap<String, serde_json::Value>,
     },
-    /// Akamai EdgeGrid (TR-409: `Authorization: EG1-HMAC-SHA256 ...` — not yet
-    /// implemented; reported as unsupported).
+    /// Akamai EdgeGrid — `Authorization: EG1-HMAC-SHA256 ...`, signed by
+    /// `tropel-auth::edgegrid`. Implemented as of TR-409/ask 10; it was
+    /// "reported as unsupported", and while it was, the three fields below
+    /// had nowhere to live but `extra`.
     #[serde(rename = "akamai-edgegrid")]
     AkamaiEdgeGrid {
         #[serde(default)]
         access_token: Option<String>,
         #[serde(default)]
         client_token: Option<String>,
+        /// The signing secret. NAMED rather than left in `extra`, now that
+        /// something reads it: a credential a caller must supply for any
+        /// request to succeed should be discoverable from the type, and the
+        /// `Debug` impl below can only promise to redact a field it can see.
+        #[serde(default)]
+        client_secret: Option<String>,
+        /// Header names to fold into the signature, in the order given.
+        ///
+        /// ORDER IS THE CALLER'S and is not sorted: Akamai reproduces the
+        /// canonical string from the same list, so re-ordering it here would
+        /// break a client that declared a different order. Empty means sign
+        /// no headers, which is the common case.
+        #[serde(default)]
+        headers_to_sign: Vec<String>,
+        /// Bodies larger than this are not hashed at all rather than
+        /// truncated — a truncated hash is a signature the server cannot
+        /// reproduce. `None` uses Akamai's own default (128 KiB).
+        #[serde(default)]
+        max_body: Option<usize>,
+        /// Kept beside the named fields, not replaced by them: an older
+        /// caller that put `clientSecret` here still deserializes, and the
+        /// signer reads `extra` as a fallback for exactly that reason.
         #[serde(flatten)]
         extra: std::collections::HashMap<String, serde_json::Value>,
     },
@@ -1217,6 +1241,85 @@ pub enum SampleType {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn edgegrid_reads_its_credentials_from_named_fields() {
+        let json = r#"{"type":"akamai-edgegrid","access_token":"at","client_token":"ct",
+          "client_secret":"cs","headers_to_sign":["X-A","X-B"],"max_body":2048}"#;
+        let auth: AuthConfig = serde_json::from_str(json).expect("reads");
+        match &auth {
+            AuthConfig::AkamaiEdgeGrid {
+                access_token,
+                client_token,
+                client_secret,
+                headers_to_sign,
+                max_body,
+                extra,
+            } => {
+                assert_eq!(access_token.as_deref(), Some("at"));
+                assert_eq!(client_token.as_deref(), Some("ct"));
+                assert_eq!(client_secret.as_deref(), Some("cs"));
+                // Order preserved, NOT sorted — Akamai rebuilds the canonical
+                // string from the same list.
+                assert_eq!(headers_to_sign, &vec!["X-A".to_string(), "X-B".to_string()]);
+                assert_eq!(*max_body, Some(2048));
+                assert!(extra.is_empty(), "nothing spills into extra: {extra:?}");
+            }
+            other => panic!("wrong variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_older_caller_that_put_the_secret_in_extra_still_deserializes() {
+        // The reason `extra` stays. Before these fields were named there was
+        // nowhere else to put them, so a caller sending `clientSecret` must
+        // keep working — the signer reads `extra` as a fallback.
+        let json = r#"{"type":"akamai-edgegrid","access_token":"at","client_token":"ct",
+          "clientSecret":"cs"}"#;
+        let auth: AuthConfig = serde_json::from_str(json).expect("reads");
+        match &auth {
+            AuthConfig::AkamaiEdgeGrid {
+                client_secret,
+                extra,
+                ..
+            } => {
+                assert!(
+                    client_secret.is_none(),
+                    "the named field is genuinely absent"
+                );
+                assert_eq!(
+                    extra.get("clientSecret").and_then(|v| v.as_str()),
+                    Some("cs"),
+                    "and the old spelling is still readable"
+                );
+            }
+            other => panic!("wrong variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn edgegrid_debug_redacts_the_secret_it_can_now_see() {
+        // The `Debug` impl claimed `client_secret: [redacted]` while no such
+        // field existed — true only because `extra` was matched by `..`. Now
+        // that the field is real the promise has to be kept for real.
+        let auth = AuthConfig::AkamaiEdgeGrid {
+            access_token: Some("at".into()),
+            client_token: Some("ct".into()),
+            client_secret: Some("SUPER-SECRET".into()),
+            headers_to_sign: Vec::new(),
+            max_body: None,
+            extra: Default::default(),
+        };
+        let shown = format!("{auth:?}");
+        assert!(
+            !shown.contains("SUPER-SECRET"),
+            "the secret must not print: {shown}"
+        );
+        assert!(shown.contains("[redacted]"), "got: {shown}");
+        // The non-secret tokens stay visible — they are what identifies the
+        // client when a 401 needs diagnosing.
+        assert!(shown.contains("at") && shown.contains("ct"), "got: {shown}");
+    }
+
     use super::*;
 
     #[test]
