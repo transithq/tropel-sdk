@@ -149,6 +149,14 @@ impl ResponseType {
 }
 
 /// A single HTTP request.
+/// `Default` for the reason [`crate::scenario::ScenarioItem`]'s docs give:
+/// `Request { url, method, ..Default::default() }` survives a field addition
+/// and a literal naming all thirteen does not.
+///
+/// The defaults are the inert ones — no headers, no body, no auth — except
+/// `follow_redirects`, which defaults to TRUE. A `#[derive(Default)]` bool is
+/// `false`, and that is the wrong answer here: it is the one field whose zero
+/// value silently changes what a request DOES rather than leaving it empty.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Request {
     /// URL string (may contain {{variables}}).
