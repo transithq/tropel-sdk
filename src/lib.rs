@@ -12,6 +12,17 @@
 //! removed, type renamed, field visibility changed) bump the major version.
 //! Before 1.0.0, breaking changes bump the minor version (0.x → 0.y).
 //!
+//! **Adding a public field is one of those breaking changes.** The scenario
+//! types are plain structs with public fields and no `#[non_exhaustive]`, so
+//! an adapter author can build them with a struct literal — the ergonomics
+//! that matter most here, since writing an adapter means constructing a
+//! `ScenarioItem` per request. The cost is that every new field breaks those
+//! literals and bumps the minor version; `cargo semver-checks` reports it as
+//! `constructible_struct_adds_field`, and the answer is to bump rather than
+//! silence. `#[non_exhaustive]` forbids struct expressions outside this crate
+//! entirely — functional update syntax included — so that trade is deferred
+//! to 1.0.0.
+//!
 //! ## Quick start — writing an input adapter
 //!
 //! > The quick-start example and stability table below are **maintained in

@@ -14,6 +14,21 @@ This crate follows strict semver. Breaking changes (trait method added or
 removed, type renamed, field visibility changed) bump the major version.
 Before 1.0.0, breaking changes bump the minor version (0.x → 0.y).
 
+**Adding a public field is one of those breaking changes.** `Scenario`,
+`ScenarioItem`, `Request` and the declaration types are plain structs with
+public fields and no `#[non_exhaustive]`, so an extension author can build
+them with a struct literal — which is the ergonomics this crate wants, since
+writing an adapter means constructing a `ScenarioItem` for every request in
+the source file. The cost is that each new field breaks those literals and
+therefore bumps the minor version. `cargo semver-checks check-release` in CI
+reports it as `constructible_struct_adds_field`, and that report is correct;
+the answer is to bump, not to silence it.
+
+`#[non_exhaustive]` would trade that for worse ergonomics in the common case
+— it forbids struct expressions outside this crate entirely, functional
+update syntax (`..Default::default()`) included — so the decision is
+deferred to 1.0.0, where a minor bump stops being a licence to break.
+
 <!-- Maintained in sync with the crate-level doc comment in src/lib.rs
      (which docs.rs renders). Update both when the public surface changes. -->
 
