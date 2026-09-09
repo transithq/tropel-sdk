@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 
 /// A protocol-agnostic scenario produced by an input adapter.
 /// The executor iterates items in folder-order with setNextRequest flow control.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Scenario {
     /// Scenario metadata.
     pub info: ScenarioInfo,
@@ -25,7 +25,7 @@ pub struct Scenario {
 }
 
 /// Scenario metadata.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ScenarioInfo {
     pub name: String,
     pub description: Option<String>,
@@ -33,7 +33,22 @@ pub struct ScenarioInfo {
 }
 
 /// An item in a scenario — either a single request or a folder of items.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// `Default` is the forward-compatible way to build one of these.
+///
+/// Adding a public field to a struct with no `#[non_exhaustive]` breaks every
+/// exhaustive literal — that is real (it is why 0.4.0 exists) and it is not
+/// something this crate can promise not to do again before 1.0. What it can
+/// do is give callers a construction that survives it:
+///
+/// ```
+/// # use tropel_sdk::scenario::ScenarioItem;
+/// let item = ScenarioItem { name: "GET /ping".into(), ..Default::default() };
+/// ```
+///
+/// A literal written that way keeps compiling across a field addition. One
+/// that names every field does not — which is a choice the caller gets to
+/// make, and could not before, because these types had no `Default` at all.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ScenarioItem {
     /// Postman item id (`item.id` / `_postman_id`), used by
     /// `setNextRequest` which resolves ids BEFORE names (backlog §4).
