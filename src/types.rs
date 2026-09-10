@@ -179,6 +179,14 @@ pub struct Request {
     pub auth: Option<AuthConfig>,
     /// Certificate configuration.
     pub certificate: Option<CertificateConfig>,
+    /// Proxy configuration, per request.
+    ///
+    /// Beside `certificate` and for the same reason: reqwest bakes proxies
+    /// into the client at BUILD time, so a per-request proxy is executed by
+    /// keying a lazily-built client map — the pattern `certificate` already
+    /// uses. `None` means the client's own configuration applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy: Option<ProxyConfig>,
     /// Whether to follow redirects.
     #[serde(default = "default_true")]
     pub follow_redirects: bool,
@@ -253,12 +261,96 @@ impl Default for Request {
             body: None,
             auth: None,
             certificate: None,
+            proxy: None,
             follow_redirects: true,
             host: None,
             cookies: Vec::new(),
             timeout: None,
             response_type: ResponseType::Text,
         }
+    }
+}
+
+/// How a proxy is chosen for a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ProxyMode {
+    /// No proxy. The default, and what every existing config gets.
+    #[default]
+    Off,
+    /// One explicitly configured proxy.
+    Fixed,
+    /// The environment's proxy variables (`HTTPS_PROXY`, `HTTP_PROXY`,
+    /// `NO_PROXY`).
+    System,
+    /// A PAC script, evaluated per URL.
+    Pac,
+}
+
+/// Proxy configuration.
+///
+/// Here rather than in `tropel-http`, where the bypass matching and PAC
+/// failover live, for the same reason `AuthConfig` is here while the signers
+/// are in `tropel-auth`: this is the DATA a request carries, and `Request` is
+/// in this crate. A type in `tropel-http` could not be a field of `Request`
+/// at all — the SDK is a leaf and depends on zero `tropel-*` crates.
+///
+/// One struct for all four modes rather than an enum with per-mode payloads:
+/// it crosses a JSON wire (KnockPort's `settings.proxy`) where an
+/// externally-tagged enum would change shape per mode, and a UI that lets the
+/// user switch mode must not lose the host they typed for `fixed` when they
+/// look at `system`.
+///
+/// `Hash` because it KEYS a client map: reqwest bakes proxies in at build
+/// time, so one lazily-built client per distinct profile is how a per-request
+/// proxy is executed at all.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct ProxyConfig {
+    pub mode: ProxyMode,
+    /// `http`, `https`, `socks5` — the proxy's own scheme, not the target's.
+    pub protocol: Option<String>,
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    /// Hosts that must NOT go through the proxy.
+    pub bypass: Vec<String>,
+    /// `pac` mode: where to fetch the script, or the script itself.
+    #[serde(alias = "pacUrl")]
+    pub pac_url: Option<String>,
+    #[serde(alias = "pacScript")]
+    pub pac_script: Option<String>,
+}
+
+impl ProxyConfig {
+    /// The proxy URL for `fixed` mode, WITHOUT credentials.
+    ///
+    /// Credentials go through `Proxy::basic_auth`, never the URL: a proxy URL
+    /// with a password in it is logged by everything that logs a URL, and
+    /// reqwest would also have to re-encode it.
+    pub fn fixed_url(&self) -> Option<String> {
+        let host = self.host.as_deref()?.trim();
+        if host.is_empty() {
+            return None;
+        }
+        let scheme = self.protocol.as_deref().unwrap_or("http").trim();
+        let scheme = if scheme.is_empty() { "http" } else { scheme };
+        Some(match self.port {
+            Some(port) => format!("{scheme}://{host}:{port}"),
+            // No port: let the proxy's own scheme default apply rather than
+            // inventing 8080.
+            None => format!("{scheme}://{host}"),
+        })
+    }
+
+    /// Whether this config asks for a proxy at all.
+    ///
+    /// `Off` is not the same as absent, and both must behave the same way at
+    /// the client: a request that explicitly says "no proxy" must not inherit
+    /// the client's.
+    pub fn is_off(&self) -> bool {
+        self.mode == ProxyMode::Off
     }
 }
 
@@ -1249,6 +1341,107 @@ pub enum SampleType {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_request_without_a_proxy_serializes_as_it_did_before() {
+        // `skip_serializing_if` — a Scenario from a source with no notion of
+        // a proxy is byte-identical to one written before the field existed,
+        // so a spool file, a distributed worker payload and a replay all
+        // round-trip unchanged.
+        let json = serde_json::to_string(&Request::default()).expect("serializes");
+        assert!(!json.contains("proxy"), "got {json}");
+    }
+
+    #[test]
+    fn a_proxy_config_round_trips_in_both_spellings() {
+        // KnockPort writes camelCase (`pacUrl`); tropel's own configs are
+        // snake_case. Both have to read, or one caller silently gets None and
+        // the request goes DIRECT while the config says otherwise.
+        let snake: ProxyConfig = serde_json::from_str(
+            r#"{"mode":"pac","pac_url":"http://wpad/proxy.pac","bypass":["*.internal"]}"#,
+        )
+        .expect("snake_case reads");
+        assert_eq!(snake.mode, ProxyMode::Pac);
+        assert_eq!(snake.pac_url.as_deref(), Some("http://wpad/proxy.pac"));
+
+        let camel: ProxyConfig =
+            serde_json::from_str(r#"{"mode":"pac","pacUrl":"http://wpad/proxy.pac"}"#)
+                .expect("camelCase reads");
+        assert_eq!(camel.pac_url.as_deref(), Some("http://wpad/proxy.pac"));
+    }
+
+    #[test]
+    fn an_absent_mode_is_off_rather_than_a_deserialize_error() {
+        // `Off` is the default so an existing config with a partial proxy
+        // block does not fail to parse — it just does not proxy.
+        let cfg: ProxyConfig = serde_json::from_str(r#"{"host":"p.internal"}"#).expect("reads");
+        assert!(cfg.is_off());
+        assert_eq!(cfg.host.as_deref(), Some("p.internal"));
+    }
+
+    #[test]
+    fn the_fixed_url_never_carries_credentials() {
+        // They go through `Proxy::basic_auth`. A proxy URL with a password in
+        // it is logged by everything that logs a URL.
+        let cfg = ProxyConfig {
+            mode: ProxyMode::Fixed,
+            protocol: Some("http".into()),
+            host: Some("p.internal".into()),
+            port: Some(3128),
+            username: Some("u".into()),
+            password: Some("SUPER-SECRET".into()),
+            ..Default::default()
+        };
+        let url = cfg.fixed_url().expect("a url");
+        assert_eq!(url, "http://p.internal:3128");
+        assert!(!url.contains("SUPER-SECRET"), "got {url}");
+        assert!(!url.contains('@'), "no userinfo form: {url}");
+    }
+
+    #[test]
+    fn a_fixed_config_with_no_host_has_no_url() {
+        // Rather than `http://:3128`, which reqwest would accept and then
+        // fail to connect to with nothing naming the empty host.
+        let cfg = ProxyConfig {
+            mode: ProxyMode::Fixed,
+            port: Some(3128),
+            ..Default::default()
+        };
+        assert!(cfg.fixed_url().is_none());
+        let blank = ProxyConfig {
+            mode: ProxyMode::Fixed,
+            host: Some("   ".into()),
+            ..Default::default()
+        };
+        assert!(blank.fixed_url().is_none(), "whitespace is not a host");
+    }
+
+    #[test]
+    fn a_proxy_config_can_key_a_map() {
+        // The reason it derives Hash: reqwest bakes proxies into the client
+        // at build time, so a per-request proxy is executed by keying one
+        // lazily-built client per distinct profile.
+        use std::collections::HashMap;
+        let a = ProxyConfig {
+            mode: ProxyMode::Fixed,
+            host: Some("a".into()),
+            ..Default::default()
+        };
+        let b = ProxyConfig {
+            mode: ProxyMode::Fixed,
+            host: Some("b".into()),
+            ..Default::default()
+        };
+        let mut map = HashMap::new();
+        map.insert(a.clone(), "client-a");
+        map.insert(b, "client-b");
+        assert_eq!(map.len(), 2, "two profiles are two keys");
+        assert_eq!(
+            map.get(&a),
+            Some(&"client-a"),
+            "and the same profile hits the same entry"
+        );
+    }
+
     #[test]
     fn edgegrid_reads_its_credentials_from_named_fields() {
         let json = r#"{"type":"akamai-edgegrid","access_token":"at","client_token":"ct",
