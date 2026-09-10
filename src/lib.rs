@@ -215,29 +215,21 @@ mod tests {
                 description: Some("SDK test".into()),
                 schema: None,
             },
+            // Functional update, not an exhaustive literal — the same
+            // construction this crate's docs recommend to extension authors,
+            // used by its own test so the recommendation is exercised rather
+            // than merely written down. An exhaustive literal here broke on
+            // every field addition (`authoring`, `contract`, `proxy`), which
+            // is precisely the cost being documented.
             items: vec![ScenarioItem {
-                authoring: None,
-                contract: None,
-                id: None,
                 name: "GET /api".into(),
                 request: Some(Request {
                     url: "https://example.com/api".into(),
                     method: Method::GET,
-                    headers: Default::default(),
-                    query_params: Default::default(),
-                    body: None,
-                    auth: None,
-                    certificate: None,
-                    follow_redirects: true,
-                    host: None,
-                    cookies: Default::default(),
-                    timeout: None,
                     response_type: ResponseType::Text,
+                    ..Default::default()
                 }),
-                prerequest: vec![],
-                test: vec![],
-                assertions: vec![],
-                items: vec![],
+                ..Default::default()
             }],
             variables: Default::default(),
             auth: None,
